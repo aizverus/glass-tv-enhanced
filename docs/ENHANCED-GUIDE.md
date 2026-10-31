@@ -4,8 +4,9 @@ Glass TV Enhanced is a fork of [Glass TV](https://github.com/cocombee/glass-tv) 
 everything Glass TV does (the debloat, the frosted-glass home screen, the clock screensaver, the weekly cache
 clean) and adds widgets, a wallpaper studio and a choice of language, all driven from an ordinary TV remote.
 
-It was built and tested on a Sony KD-65X8000H (Android TV 10). The setup steps are the same as Glass TV's:
-see [CLEANYOURTV-README.md](CLEANYOURTV-README.md) and [AGENTS.md](../AGENTS.md).
+It was built and tested on a Sony KD-65X8000H (Android TV 10). The easiest way to install it is
+[with an AI assistant](#install-it-with-an-ai-assistant); the manual steps are the same as Glass TV's, in
+[CLEANYOURTV-README.md](CLEANYOURTV-README.md).
 
 ![Home with the clock, weather, prayer times, Wisdom and Premier League widgets](screenshots/enhanced/home.jpg)
 
@@ -107,6 +108,33 @@ language they were written in. To add a language, copy `launcher/app/src/main/re
 The TV's app caches are cleared once a day while Home sits idle (Glass TV did it every 15 days). The **Clear
 cache** tile in All apps does it at once and closes apps left running in the background; a message shows the
 storage before and after. The first time, the TV asks "Allow USB debugging?": choose **Always allow**.
+
+## Install it with an AI assistant
+
+This is how Glass TV Enhanced was set up on its first TV: an AI coding assistant on a laptop did the work over
+Wi-Fi, asked before every change and checked each step with screenshots from the TV. You need a computer on the
+same Wi-Fi as the TV, and about an hour.
+
+1. **On the TV**: Settings → Device Preferences → About → press OK on **Build** seven times. Go back to
+   **Developer options** and turn on **USB debugging** (and **Network / ADB debugging** if your TV shows it).
+   Note the TV's IP address (Settings → Network).
+2. **On the computer**: install an AI coding assistant that can run commands, such as
+   [Claude Code](https://claude.com/claude-code) (desktop app or terminal); Codex, Cursor or Copilot work too.
+3. **Get the project**: `git clone https://github.com/aizverus/glass-tv-enhanced`, then open the assistant in
+   that folder. [AGENTS.md](../AGENTS.md) is its playbook: it checks your model first, backs up the TV, never
+   uninstalls anything, and writes a restore script.
+4. **Paste this**, with your own details:
+
+   > Set up Glass TV Enhanced on my TV. It is a *brand and model* at *192.168.x.x*. Follow AGENTS.md: check the
+   > model first, back up before changing anything, ask me before each change and show me a screenshot after
+   > each step. Then set up the widgets I want: weather for *my town*, prayer times for *my JAKIM zone* (or
+   > hide them), Wisdom, Premier League for *my teams* (or hide it), and the language *English / Bahasa Melayu
+   > / 中文*. When you update it later, use `pm install -r` so my settings stay.
+
+5. **On the TV**, when "Allow USB debugging?" appears, tick **Always allow** and press OK.
+
+Later, just ask the same assistant for changes in your own words ("make the clock bigger", "add my phone
+photos as wallpapers", "hide the football"), as this project's owner did.
 
 ## Credits
 

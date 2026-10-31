@@ -74,7 +74,7 @@
 <div class="wrap">
   <header class="top">
     <div class="brand">Glass TV <span>Enhanced</span></div>
-    <nav><a href="#features">Features</a><a href="#remote">Remote</a><a href="#setup">Set up</a>
+    <nav><a href="#features">Features</a><a href="#remote">Remote</a><a href="#ai">Install with AI</a><a href="#setup">Set up</a>
       <a href="https://github.com/aizverus/glass-tv-enhanced">GitHub</a></nav>
   </header>
 
@@ -83,6 +83,7 @@
     <p class="lead">Your Android TV. Fast, ad-free and truly yours.</p>
     <div class="cta">
       <a class="btn primary" href="https://github.com/aizverus/glass-tv-enhanced">Get it on GitHub</a>
+      <a class="btn" href="#ai">Install with AI</a>
       <a class="btn" href="https://github.com/aizverus/glass-tv-enhanced/blob/main/docs/ENHANCED-GUIDE.md">Read the guide</a>
     </div>
     <div class="video">
@@ -134,11 +135,30 @@
     </table></div>
   </section>
 
+  <section id="ai">
+    <h2>Install it with AI, the way it was built</h2>
+    <p class="sub">An AI coding assistant on your laptop does the setup over Wi-Fi, asks before every change and shows you a screenshot after each step.</p>
+    <ol class="steps">
+      <li><b>On the TV:</b> Settings → Device Preferences → About → press OK on <em>Build</em> seven times, then turn on <em>USB debugging</em> (and <em>Network debugging</em>) in Developer options. Note the TV's IP address.</li>
+      <li><b>On a computer on the same Wi-Fi:</b> install an AI coding assistant such as <a href="https://claude.com/claude-code">Claude Code</a> (Codex, Cursor or Copilot work too).</li>
+      <li><b>Get the project</b> and open the assistant in its folder: <code>git clone https://github.com/aizverus/glass-tv-enhanced</code></li>
+      <li><b>Paste this prompt</b> with your own details:</li>
+    </ol>
+<pre>Set up Glass TV Enhanced on my TV. It is a [brand and model] at [192.168.x.x].
+Follow AGENTS.md: check the model first, back up before changing anything,
+ask me before each change and show me a screenshot after each step.
+Then set up the widgets I want: weather for [my town], prayer times for
+[my JAKIM zone] (or hide them), Wisdom, Premier League for [my teams]
+(or hide it), and the language [English / Bahasa Melayu / 中文].
+When you update it later, use pm install -r so my settings stay.</pre>
+    <p class="sub">When the TV asks "Allow USB debugging?", tick <em>Always allow</em>. After that, ask for changes in your own words: "make the clock bigger", "add my phone photos", "hide the football".</p>
+  </section>
+
   <section id="setup">
     <div class="poster">
       <img src="media/poster.png" alt="Glass TV Enhanced poster" loading="lazy">
       <div>
-        <h2>Set it up in an evening</h2>
+        <h2>Or set it up by hand</h2>
         <p class="sub">Glass TV Enhanced installs over Wi-Fi, needs no root, and nothing it does can't be undone.</p>
         <ol class="steps">
           <li><b>Turn on network debugging</b> on your Android TV or Google TV (Developer options).</li>

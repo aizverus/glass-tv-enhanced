@@ -26,7 +26,18 @@ Gathin that adds widgets, a wallpaper studio and a choice of language, all drive
   step aside when you browse the rows below the dock.
 - **Cleaner every day:** the TV's app caches are cleared daily, and a Clear cache tile does it on demand.
 
-Setting it up is the same as Glass TV's, below. Everything Glass TV does is still here.
+### Install it with AI, the way it was built
+
+Turn on developer options and USB / network debugging on the TV, clone this repository on a computer on the
+same Wi-Fi, open an AI coding assistant such as [Claude Code](https://claude.com/claude-code) in the folder and
+paste:
+
+> Set up Glass TV Enhanced on my TV. It is a *brand and model* at *192.168.x.x*. Follow AGENTS.md: check the
+> model first, back up before changing anything, ask me before each change and show me a screenshot after each
+> step. Then set up the widgets I want and the language *English / Bahasa Melayu / 中文*.
+
+The step-by-step version is in the [guide](docs/ENHANCED-GUIDE.md#install-it-with-an-ai-assistant). The manual
+setup is the same as Glass TV's, below; everything Glass TV does is still here.
 
 | | |
 |---|---|
