@@ -61,13 +61,14 @@
   ol.steps b { color: var(--ink); font-weight: 500; }
   pre { background: #05070d; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; overflow-x: auto; font-size: 14px; color: #dfe6ff; }
   .poster { display: grid; grid-template-columns: minmax(0, 360px) 1fr; gap: 28px; align-items: center; }
+  .poster > * { min-width: 0; }
   .poster img { width: 100%; border-radius: var(--radius); border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.5); }
   .tip { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
   .tip img { border-radius: 12px; background: #fff; }
   .addr { display: inline-block; word-break: break-all; font-size: 16px; padding: 8px 12px; border-radius: 10px; background: #05070d; border: 1px solid var(--line); color: #ffd9a3; }
   .tip .btn { cursor: pointer; font: inherit; }
   footer { padding: 56px 0 40px; color: var(--dim); font-size: 14px; text-align: center; }
-  @media (max-width: 720px) {
+  @media (max-width: 860px) {
     nav { display: none; }
     .poster { grid-template-columns: 1fr; }
     .grid { grid-template-columns: 1fr; }
