@@ -74,6 +74,11 @@ import java.util.Set;
  */
 public class MainActivity extends Activity implements AppAdapter.TileListener {
 
+    @Override
+    protected void attachBaseContext(android.content.Context base) {
+        super.attachBaseContext(Lang.wrap(base));
+    }
+
     /** Tiles per row and dock slots (res/values/config.xml, columns). Set in onCreate. */
     static int COLUMNS = 4;
     private static final long MINUTE_MS = 60_000L;
@@ -129,6 +134,69 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView btnWifi;
     private TextView shamsiDate;
     private boolean shamsi;
+    /** JAKIM zone for the prayer row, empty when it is off; the row's six time cells and the info line after them. */
+    private String prayerZone = "";
+    private boolean heroQuotes;
+    private boolean tileGlow;
+    private boolean dockMagnify;
+    private Set<String> eplTeams = Collections.emptySet();
+    private TextView eplCard;
+    private boolean eplRefreshRunning;
+    private Dialog eplDialog;
+    private boolean hourGlow;
+    private boolean prayerAlert;
+    private boolean cornerGlow;
+    /** The edge glow's slow breath (CornerGlow.pulse), only while Home is in front. */
+    private android.animation.ValueAnimator glowPulse;
+
+    private void spinCorners(boolean on) {
+        if (!cornerGlow) return;
+        if (glowPulse != null) glowPulse.cancel();
+        glowPulse = null;
+        CornerGlow.pulse = 1f;
+        if (!on || reducedMotion) return;
+        glowPulse = android.animation.ValueAnimator.ofFloat(1f, 0.5f);
+        glowPulse.setDuration(3500);
+        glowPulse.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+        glowPulse.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+        glowPulse.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+        glowPulse.addUpdateListener(a -> {
+            CornerGlow.pulse = (float) a.getAnimatedValue();
+            if (ambientShown) ambient.invalidate();
+        });
+        glowPulse.start();
+    }
+    /** The hover tick (hover_sound): loaded once, played as the selection moves between apps. */
+    private android.media.SoundPool ticks;
+    private int tick;
+    private int tickedAt = -1;
+    private long tickAt;
+
+    /** The hover tick, at most once per move however the move arrives (sideways, up, down). */
+    private void playTick() {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (ticks == null || now - tickAt < 120) return;
+        tickAt = now;
+        ticks.play(tick, 0.35f, 0.35f, 0, 0, 1f);
+    }
+    /** The cell blinking in the last seconds before its time, or -1. */
+    private int blinking = -1;
+    private android.animation.ValueAnimator blink;
+    private VoiceGlow voiceGlow;
+    /** Name of the wallpaper on screen, so a picture chosen in the picker can be put up on return. */
+    private String wallName;
+    /** Dock tiles currently raised beside the selected one. */
+    private final List<View> raised = new ArrayList<>();
+    private LinearLayout prayerRow;
+    private final TextView[] prayerLabels = new TextView[PrayerTimes.NAMES.length];
+    private final TextView[] prayerClocks = new TextView[PrayerTimes.NAMES.length];
+    private TextView prayerInfo;
+    /** The chosen place's weather under the Hijri date; OK opens the weather page. */
+    private TextView weatherLine;
+    private boolean weatherRefreshRunning;
+    /** Space round the prayer texts, in dp, so their glow is not cut off at the text's edge. */
+    private static final int GLOW_ROOM = 9;
+    private boolean prayerRefreshRunning;
     private String vpnApp;
     private SpringAnimation springX, springY;
     private float glassTargetX, glassTargetY;
@@ -171,6 +239,29 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     /** Rotating wallpaper (Config.wallpapers), the view that shows it and the bitmap on screen. */
     private List<File> wallpapers = Collections.emptyList();
     private long wallpaperIntervalMs;
+    /** Set while Home is behind another app, for the change-on-every-return choice. */
+    private boolean returning;
+    private int storageTries;
+
+    private final Runnable storageWait = new Runnable() {
+        @Override
+        public void run() {
+            if (isDestroyed()) return;
+            if (Config.ready(MainActivity.this)) {
+                android.util.Log.i("TvHome.Config", "shared storage is up: reloading the theme");
+                recreate();
+            } else if (++storageTries < 360) {
+                handler.postDelayed(this, 500);
+            }
+        }
+    };
+
+    /** How often the picture changes: the picker's choice, else the theme's. 0 = only when Home starts. */
+    private long wallInterval() {
+        long chosen = getSharedPreferences(WallpaperPickerActivity.PREFS, MODE_PRIVATE)
+                .getLong(WallpaperPickerActivity.INTERVAL, Long.MIN_VALUE);
+        return chosen == Long.MIN_VALUE ? wallpaperIntervalMs : chosen;
+    }
     /** Decodes the next picture off the main thread, so a switch never stutters the D-pad animations. */
     private final java.util.concurrent.ExecutorService wallDecoder = java.util.concurrent.Executors.newSingleThreadExecutor();
     private long wallShownAt;
@@ -186,6 +277,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         @Override
         public void onAvailable(@NonNull Network network) {
             handler.post(MainActivity.this::updateWifiLabel);
+            // Online at last (at boot Wi-Fi comes up after Home): fetch what failed while offline.
+            handler.post(() -> {
+                if (isDestroyed()) return;
+                if (EplScores.matches.isEmpty()) EplScores.fetchedAt = 0;
+                refreshEplIfDue();
+                refreshWeatherIfDue();
+            });
         }
 
         @Override
@@ -231,8 +329,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         @Override
         public void run() {
             updateShamsiDate();
+            updatePrayerTimes();
+            refreshEplIfDue();
+            refreshWeatherIfDue();
             updateWifiLabel();
             refreshPlacesIfDue();
+            // Wisdom set to change every few minutes.
+            if (heroQuotes && wallName != null) setPlace(new File(wallName));
             handler.postDelayed(this, MINUTE_MS);
         }
     };
@@ -242,9 +345,37 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         density = getResources().getDisplayMetrics().density;
+        current = new java.lang.ref.WeakReference<>(this);
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
         Config cfg = Config.load(this);
         COLUMNS = cfg.columns;
+        AppAdapter.TILE_SCALE = cfg.tileSizePercent / 100f;
+        // Started before shared storage was mounted (just after the TV turned on): the theme came from
+        // the internal copy, but the pictures are not reachable yet. Look again until they are, then
+        // start over once with everything in place.
+        if (!Config.ready(this)) handler.postDelayed(storageWait, 500);
+        AppAdapter.MAX_TILES = cfg.maxTiles;
+        AppAdapter.SHEEN = cfg.tileSheen;
+        AppAdapter.GLASS_ICON = cfg.glassIcon;
+        AppAdapter.PULSE = cfg.tilePulse;
+        prayerAlert = cfg.prayerAlert;
+        cornerGlow = cfg.cornerGlow;
+        if (cfg.hoverSound) {
+            ticks = new android.media.SoundPool.Builder().setMaxStreams(2)
+                    .setAudioAttributes(new android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                    .build();
+            tick = ticks.load(this, R.raw.hover_tick, 1);
+        }
+        eplTeams = new HashSet<>(cfg.eplTeams);
+        hourGlow = cfg.hourGlow;
+        if (cfg.voiceGlow) {
+            voiceGlow = new VoiceGlow(this);
+            voiceGlow.start();
+        }
+        tileGlow = cfg.tileGlow;
+        dockMagnify = cfg.dockMagnify;
         reducedMotion = cfg.reducedMotion;
         liveTvPkg = cfg.liveTvPackage;
         liveTvAction = cfg.liveTvAction;
@@ -269,6 +400,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (placesMode) wallpapers = PlaceWallpapers.list(this);
         if (!wallpapers.isEmpty()) showNextWallpaper(false);
         else if (cfg.wallpaper != null && !placesMode) setWallpaper(decodeWallpaper(cfg.wallpaper), false);
+        else if (lastWallpaper().exists()) {
+            // Shared storage is not up yet (just after the TV starts): the picture last on screen,
+            // kept in the app's own storage, so Home looks itself at once instead of plain.
+            wallDecoder.execute(() -> {
+                android.graphics.Bitmap bmp = WallFilters.apply(decodeWallpaper(lastWallpaper()),
+                        WallFilters.of(this, getSharedPreferences(WallpaperPickerActivity.PREFS, MODE_PRIVATE).getString(LAST_NAME, null)));
+                handler.post(() -> {
+                    if (!isDestroyed()) setWallpaper(bmp, false);
+                });
+            });
+        }
         glass = findViewById(R.id.glass);
         ambient = findViewById(R.id.ambient);
         Backdrop.setWorker(wallDecoder, handler);
@@ -287,7 +429,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // bottom edge: every time it is measured, its top is worked out again. Positioning it by
         // the height it happened to have beforehand is what let a tall block run into the dock.
         heroShelf.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> {
-            if (heroBottom > 0) v.setY(heroBottom - v.getHeight());
+            // The Wisdom widget hangs from the top instead, under the prayer times, so a short
+            // saying does not drop it (and the score card beside it) down towards the dock.
+            if (heroQuotes) v.setY(widgetTop());
+            else if (heroBottom > 0) v.setY(heroBottom - v.getHeight());
         });
         btnWifi = findViewById(R.id.btnWifi);
         if (!cfg.showNetworkPill) btnWifi.setVisibility(View.GONE);
@@ -313,6 +458,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             float dateTop = dateBlock.getTop() + dateBlock.getTranslationY() + dateLine.getTop() + dateLine.getBaseline() + cap.top;
             amPm.setTranslationY(Math.round(capsAtTop + (foot + dateTop) / 2f - foot));
         });
+        prayerZone = cfg.prayerZone;
+        heroQuotes = cfg.heroQuotes;
+        prayerRow = findViewById(R.id.prayerRow);
+        if (heroQuotes) setupWisdomWidget();
+        if (!prayerZone.isEmpty()) buildPrayerRow();
         vpnApp = cfg.vpnApp;
         moduleCards = cfg.moduleCards;
         hiddenApps = new HashSet<>(cfg.hiddenApps);
@@ -346,7 +496,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
         // The grid only shows the shape on the tray.
         glider.addCompanion(grid, tray.area);
-        for (int id : new int[]{R.id.btnInputs, R.id.btnWifi, R.id.btnSettings}) {
+        for (int id : new int[]{R.id.btnInputs, R.id.btnWifi, R.id.btnWallpaper, R.id.btnSettings}) {
             View pill = findViewById(id);
             pill.setBackground(new GlassDrawable(pill, 21 * density, density, glider));
             glider.addCompanion(pill);
@@ -427,6 +577,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             return true;
         });
         btnSettings.setOnClickListener(v -> open(systemIntent(Settings.ACTION_SETTINGS)));
+        View btnWallpaper = findViewById(R.id.btnWallpaper);
+        btnWallpaper.setOnClickListener(v -> open(new Intent(this, WallpaperPickerActivity.class)));
         btnSettings.setOnLongClickListener(v -> {
             if (!moduleCards) return false;   // off: a long press does nothing, as before the feature
             showModuleCards();
@@ -439,8 +591,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
             if (keyCode == KeyEvent.KEYCODE_DPAD_UP) return true;
             if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
-                // Back to the dock tile Up came from, not wherever the focus finder lands.
-                focusTile(lastFocused % COLUMNS);
+                // Down the screen in order: weather, prayer times, the score card, then the dock.
+                if (weatherLine != null && weatherLine.getVisibility() == View.VISIBLE) weatherLine.requestFocus();
+                else if (prayerRow != null && prayerRow.getVisibility() == View.VISIBLE) prayerRow.requestFocus();
+                else focusMiddle(v);
                 return true;
             }
             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
@@ -455,11 +609,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnInputs.setOnKeyListener(pillKeys);
         btnWifi.setOnKeyListener(pillKeys);
         btnSettings.setOnKeyListener(pillKeys);
+        btnWallpaper.setOnKeyListener(pillKeys);
 
         // Hide the glass when focus leaves the tiles.
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
             boolean onTile = newF != null && newF.getId() == R.id.card;
             if (!onTile) hideGlass();
+            if (!onTile) muteOthers(null);
             if (!onTile && (newF == null || !(isTopPill(newF) || inMenu(newF)))) glider.hide();
         });
 
@@ -502,9 +658,36 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     }
 
+    /** A copy of the picture on screen in the app's own storage, readable before shared storage is up. */
+    private File lastWallpaper() {
+        return new File(getFilesDir(), "last-wallpaper.jpg");
+    }
+
+    /** Pref naming the picture copied to {@link #lastWallpaper()}, for its filter. */
+    private static final String LAST_NAME = "last_name";
+
+    /** Copies the picture on screen to {@link #lastWallpaper()}; call off the main thread. */
+    private void keepAsLast(File file) {
+        try {
+            java.nio.file.Files.copy(file.toPath(), lastWallpaper().toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            getSharedPreferences(WallpaperPickerActivity.PREFS, MODE_PRIVATE).edit().putString(LAST_NAME, file.getName()).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
     /** Puts a picture behind everything, cross-fading from the previous one when asked. */
     private void setWallpaper(android.graphics.Bitmap bmp, boolean fade) {
         setWallpaper(bmp, fade, null);
+    }
+
+    /** Fill the screen (cropping the edges) or fit the whole picture, as chosen in the picker. */
+    private void applyWallpaperFit() {
+        if (wallView == null) return;
+        boolean fit = "fit".equals(getSharedPreferences(WallpaperPickerActivity.PREFS, MODE_PRIVATE)
+                .getString(WallpaperPickerActivity.FIT, "fill"));
+        wallView.setScaleType(fit ? android.widget.ImageView.ScaleType.FIT_CENTER
+                : android.widget.ImageView.ScaleType.CENTER_CROP);
     }
 
     /** With {@code blur} made in advance, the glass changes in step with the picture. */
@@ -513,12 +696,22 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (wallView == null) {
             wallView = new android.widget.ImageView(this);
             wallView.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+            handler.post(this::applyWallpaperFit);
             // Photos are bright: dim them so the clock, names and tiles stay readable.
             if (placesMode) wallView.setColorFilter(0xFF7A7A7A, android.graphics.PorterDuff.Mode.MULTIPLY);
             root.addView(wallView, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            // A faint vignette over the picture, under everything else.
+            View vignette = new View(this);
+            vignette.setBackground(new Vignette());
+            root.addView(vignette, 1, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
         android.graphics.Bitmap old = wallBitmap;
         wallBitmap = bmp;
+        // The edge glow takes the picture's colours near each edge.
+        try {
+            CornerGlow.wallpaper = android.graphics.Bitmap.createScaledBitmap(bmp, 8, 5, true);
+        } catch (Exception ignored) {
+        }
         if (fade && old != null && !reducedMotion) {
             android.graphics.drawable.TransitionDrawable t = new android.graphics.drawable.TransitionDrawable(new android.graphics.drawable.Drawable[]{
                     new android.graphics.drawable.BitmapDrawable(getResources(), old),
@@ -547,6 +740,65 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     }
 
+    /** Home while it exists, so the wallpaper picker (see-through) can try pictures on it. */
+    static java.lang.ref.WeakReference<MainActivity> current = new java.lang.ref.WeakReference<>(null);
+    /** The picture Home had before the picker started trying others, put back if none is kept. */
+    private android.graphics.Bitmap beforePreview;
+    private volatile File previewing;
+    private volatile String previewFilter;
+    /** The look Home's own picture had when the trying began: if it changed, the picture comes back in the new one. */
+    private String beforeFilter;
+
+    /** Shows {@code file} with the look {@code filter} behind the picker, as Home would, without choosing it. */
+    void previewWallpaper(File file, String filter) {
+        if (placesMode || isDestroyed()) return;
+        if (beforePreview == null) {
+            beforePreview = wallBitmap;
+            beforeFilter = WallFilters.of(this, wallName);
+        }
+        previewing = file;
+        previewFilter = filter;
+        applyWallpaperFit();
+        wallDecoder.execute(() -> {
+            if (previewing != file || !filter.equals(previewFilter)) return;
+            android.graphics.Bitmap bmp = WallFilters.apply(decodeWallpaper(file), filter);
+            android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+            android.graphics.Bitmap blur = bmp == null || previewing != file ? null : Backdrop.blur(bmp, dm.widthPixels, dm.heightPixels, 0);
+            handler.post(() -> {
+                if (isDestroyed() || previewing != file || !filter.equals(previewFilter) || bmp == null) return;
+                setWallpaper(bmp, true, blur);
+            });
+        });
+    }
+
+    /** The picker is done trying: keep {@code kept} (already on screen) or put the old picture back. */
+    void endPreview(File kept) {
+        if (beforePreview == null && previewing == null) return;
+        File shown = previewing;
+        previewing = null;
+        android.graphics.Bitmap old = beforePreview;
+        beforePreview = null;
+        if (kept != null && kept.equals(shown) && wallBitmap != old) {
+            wallName = kept.getName();
+            setPlace(kept);
+            wallDecoder.execute(() -> keepAsLast(kept));
+        } else if (wallName != null && !WallFilters.of(this, wallName).equals(beforeFilter)) {
+            // Home's own picture was given a new look while trying: it comes back in that look.
+            for (File f : wallpapers) {
+                if (!f.getName().equals(wallName)) continue;
+                String look = WallFilters.of(this, wallName);
+                wallDecoder.execute(() -> {
+                    android.graphics.Bitmap bmp = WallFilters.apply(decodeWallpaper(f), look);
+                    handler.post(() -> {
+                        if (!isDestroyed() && bmp != null && previewing == null) setWallpaper(bmp, true);
+                    });
+                });
+            }
+        } else if (old != null && wallBitmap != old) {
+            setWallpaper(old, true);
+        }
+    }
+
     /** Hands the picture now on screen to the glass, which blurs it once, off the main thread. */
     private void blurBackdrop(android.graphics.Bitmap bmp) {
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
@@ -557,16 +809,23 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void showNextWallpaper(boolean fade) {
         android.content.SharedPreferences prefs = getSharedPreferences("wallpaper", MODE_PRIVATE);
         int next = (prefs.getInt("index", -1) + 1) % wallpapers.size();
+        // A picture chosen in the picker stays until Auto is chosen again.
+        String fixed = prefs.getString(WallpaperPickerActivity.FIXED, "");
+        for (int i = 0; i < wallpapers.size() && !fixed.isEmpty(); i++) {
+            if (wallpapers.get(i).getName().equals(fixed)) next = i;
+        }
         prefs.edit().putInt("index", next).apply();
         wallShownAt = android.os.SystemClock.elapsedRealtime();
         final File file = wallpapers.get(next);
+        wallName = file.getName();
         // On a cold start, name the place straight away: waiting for the decode showed the app's name
         // at full size and shrank it a moment later. After that the name changes with the picture,
         // or it would name the next place over the last one's picture while that one decodes.
         if (placeName == null) setPlace(file);
         final boolean firstPicture = wallBitmap == null;
         wallDecoder.execute(() -> {
-            android.graphics.Bitmap bmp = decodeWallpaper(file);
+            android.graphics.Bitmap bmp = WallFilters.apply(decodeWallpaper(file), WallFilters.of(this, file.getName()));
+            if (bmp != null) keepAsLast(file);
             // After the first picture, the blur is made here, before the picture is shown, so the glass
             // changes with the wallpaper rather than after it. The first picture of a fresh start does
             // not wait for its blur: Home is held for it, and the glass catches up a moment later.
@@ -586,7 +845,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         @Override
         public void run() {
             if (wallpapers.size() >= 2) showNextWallpaper(true);
-            handler.postDelayed(this, wallpaperIntervalMs);
+            handler.postDelayed(this, Math.max(60_000L, wallInterval()));
         }
     };
 
@@ -619,11 +878,33 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void startWallpaperRotation() {
         refreshPlacesIfDue();
         handler.removeCallbacks(wallTick);
-        if (wallpapers.size() < 2 || wallpaperIntervalMs <= 0) return;
+        applyWallpaperFit();
+        // Pictures added or removed in the picker since Home last looked.
+        if (!placesMode && config != null) {
+            List<File> now = Config.load(this).wallpapers;
+            if (!now.equals(wallpapers)) {
+                wallpapers = now;
+                if (wallName != null && !wallpapers.isEmpty()) {
+                    boolean gone = true;
+                    for (File f : wallpapers) if (f.getName().equals(wallName)) gone = false;
+                    if (gone) showNextWallpaper(true);
+                }
+            }
+        }
+        String fixed = getSharedPreferences("wallpaper", MODE_PRIVATE).getString(WallpaperPickerActivity.FIXED, "");
+        if (!fixed.isEmpty()) {
+            if (!fixed.equals(wallName) && !wallpapers.isEmpty()) showNextWallpaper(true);
+            return;
+        }
+        long interval = wallInterval();
+        // "Every time you come back from an app": a new picture on each return to Home.
+        if (interval == WallpaperPickerActivity.EVERY_RETURN && returning && wallpapers.size() >= 2) showNextWallpaper(true);
+        returning = false;
+        if (wallpapers.size() < 2 || interval <= 0) return;
         long waited = android.os.SystemClock.elapsedRealtime() - wallShownAt;
         // A picture that fell due while you were in an app waits a few seconds: decoding, blurring
         // and fading it the moment you come back competed with Home for the TV's slow CPU.
-        handler.postDelayed(wallTick, Math.max(RETURN_SETTLE_MS, wallpaperIntervalMs - waited));
+        handler.postDelayed(wallTick, Math.max(RETURN_SETTLE_MS, interval - waited));
     }
 
     /**
@@ -634,6 +915,28 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        if (eplDialog != null) eplDialog.dismiss();
+        if (intent != null && intent.getBooleanExtra(CHOOSE_AZAN, false)) {
+            // The Waktu Solat tile in All apps.
+            handler.postDelayed(() -> {
+                if (!isDestroyed()) choosePrayerSound();
+            }, 350);
+            return;
+        }
+        if (intent != null && intent.getBooleanExtra(CLEAN_NOW, false)) {
+            // The Clear cache tile in All apps.
+            Toast.makeText(this, getString(R.string.clean_running), Toast.LENGTH_SHORT).show();
+            CacheCleaner.runNow(this, said -> handler.post(() -> Toast.makeText(this, said, Toast.LENGTH_LONG).show()));
+            return;
+        }
+        if (intent != null && intent.getBooleanExtra(SHOW_EPL, false)) {
+            // The Premier League tile in All apps: the table, once Home is back in front.
+            if (EplScores.matches.isEmpty()) EplScores.fetchedAt = 0;
+            handler.postDelayed(() -> {
+                if (!isDestroyed()) showEplTable();
+            }, 350);
+            return;
+        }
         if (intent == null || !intent.hasCategory(Intent.CATEGORY_HOME)) return;
         // Home pressed on Home goes back to the first app. Home pressed in another app comes back to
         // the app you left from: resetting then made the selection run from it to the first app.
@@ -648,6 +951,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * arrives before onResume, so this tells it apart from a Home press on Home itself.
      */
     private boolean hiddenSinceResume;
+    /** Extra on the intent from All apps' Premier League tile: open the league table. */
+    static final String SHOW_EPL = "show_epl";
+    /** Extra on the intent from All apps' Clear cache tile. */
+    static final String CLEAN_NOW = "clean_now";
+    /** Extra on the intent from the Waktu Solat page's azan button: choose the azan sound. */
+    static final String CHOOSE_AZAN = "choose_azan";
+    /** The phone upload page (wallpapers, azan audio), served while Home is in front. */
+    private WallpaperImport.Server uploadServer;
 
     @Override
     protected void onStop() {
@@ -669,6 +980,23 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         resuming = true;
         reloadApps(true);
         updateShamsiDate();
+        updatePrayerTimes();
+        updateEplCard();
+        // The words may have been changed on the Wisdom page.
+        if (heroQuotes && wallName != null) setPlace(new File(wallName));
+        showWisdom();
+        refreshEplIfDue();
+        refreshWeatherIfDue();
+        scheduleHourGlow();
+        spinCorners(true);
+        if (uploadServer != null) uploadServer.close();
+        uploadServer = new WallpaperImport.Server(this, () -> handler.post(() -> {
+            if (isDestroyed()) return;
+            android.widget.Toast.makeText(this, getString(R.string.received_phone), android.widget.Toast.LENGTH_SHORT).show();
+            if (!placesMode && config != null) wallpapers = Config.load(this).wallpapers;
+        }));
+        uploadServer.start();
+        if (tileGlow && glider != null && ambientColor != -1) glider.setGlowColor(ambientColor);
         updateWifiLabel();
         updateInputsButton();
         startWallpaperRotation();
@@ -760,9 +1088,19 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         unregisterReceiver(packageReceiver);
         handler.removeCallbacks(minuteTick);
         handler.removeCallbacks(wallTick);
+        handler.removeCallbacks(hourGlowTick);
+        handler.removeCallbacks(ambientIdle);
+        handler.removeCallbacks(blinkStart);
+        if (prayerClocks[0] != null) stopBlink();
+        if (glider != null) glider.setGlowColor(0);   // no breathing behind another app
+        spinCorners(false);
+        if (uploadServer != null) uploadServer.close();
+        uploadServer = null;
+        returning = true;
         // Nothing of ours stays on screen over another app; an undecided prompt simply returns next time.
         if (cardPrompt != null) cardPrompt.dismiss();
         if (openPopup != null) openPopup.dismiss();
+        if (eplDialog != null) eplDialog.dismiss();
         closeMenu(false);
         finishMove();
     }
@@ -787,6 +1125,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     protected void onDestroy() {
         super.onDestroy();
         wallDecoder.shutdownNow();
+        if (voiceGlow != null) voiceGlow.stop();
+        if (ticks != null) ticks.release();
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         if (tim != null) tim.unregisterCallback(inputCallback);
@@ -808,6 +1148,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     @Override
     public void onTileFocused(int position, View card) {
+        // Only when the selection moves to another app, not when Home puts it back on return.
+        if (!resuming && position != tickedAt) playTick();
+        tickedAt = position;
+        if (dockMagnify) magnifyDock(position, card);
+        // The other apps keep their own colours: only the selected one changes.
         lastFocused = position;
         lastFocusedKey = adapter.keyAt(position);
         // Tile rect in root coordinates, using layout positions (ignores the scale animation).
@@ -860,7 +1205,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 else grid.smoothScrollBy(0, dy);
             }
             showHero(position, scroll ? r.top - dy : r.top);
+            fadeWidgets(true);
         } else {
+            // The rows below scroll up over where the widgets sit: they step aside until the dock is back.
+            fadeWidgets(false);
             // Below the dock there is no shelf, but the glow still takes this app's colour, so every
             // tile lights the room the same way the dock does.
             hideShelf();
@@ -876,6 +1224,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void showHero(int position, float dockTopInRoot) {
         // The place the picture is of, when there is one; the app's own name is the fallback for
         // the user's own wallpapers, which carry no title.
+        if (heroQuotes) {
+            // The Wisdom widget stays put whichever app is selected; only the glow follows the app.
+            showWisdom();
+            showAmbient(adapter.ambientColorAt(position));
+            return;
+        }
         final String label = placeName != null ? placeName : adapter.labelAt(position);
         final String desc = placeName != null ? placeText : "";
         final String where = placeName != null ? placeCountry : "";
@@ -948,7 +1302,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         alignButton.set(0, 0, topSettings.getWidth(), topSettings.getHeight());
         root.offsetDescendantRectToMyCoords(topSettings, alignButton);
         float shift = alignCard.right - alignButton.right;
-        if (Math.abs(topRow.getTranslationX() - shift) >= 1f) topRow.setTranslationX(shift);
+        if (Math.abs(topRow.getTranslationX() - shift) >= 1f) {
+            topRow.setTranslationX(shift);
+            positionEplCard();
+        }
     }
 
     /**
@@ -966,11 +1323,35 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     private boolean isTopPill(View v) {
         int id = v.getId();
-        return id == R.id.btnInputs || id == R.id.btnWifi || id == R.id.btnSettings;
+        return id == R.id.btnInputs || id == R.id.btnWifi || id == R.id.btnWallpaper || id == R.id.btnSettings;
+    }
+
+    /** Raises the dock apps either side of the selected one and lowers those raised before. */
+    private void magnifyDock(int position, View card) {
+        List<View> next = new ArrayList<>();
+        if (position < COLUMNS) {
+            for (int p = position - 1; p <= position + 1; p += 2) {
+                if (p < 0 || p >= COLUMNS) continue;
+                RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(p);
+                if (vh instanceof AppAdapter.Holder) next.add(((AppAdapter.Holder) vh).card);
+            }
+        }
+        for (View v : raised) {
+            if (next.contains(v) || v == card || v.isFocused()) continue;
+            v.animate().scaleX(1f).scaleY(1f).setDuration(200).withLayer().start();
+        }
+        for (View v : next) {
+            if (v.isFocused()) continue;
+            v.animate().scaleX(AppAdapter.NEIGHBOUR_SCALE).scaleY(AppAdapter.NEIGHBOUR_SCALE)
+                    .setDuration(reducedMotion ? 120 : 260).withLayer().start();
+        }
+        raised.clear();
+        raised.addAll(next);
     }
 
     /** Sends the focus shape onto a pill: from a tile it glides up and narrows into the pill. */
     private void moveTopHighlight(View pill) {
+        if (dockMagnify) magnifyDock(Integer.MAX_VALUE, null);
         if (resuming) return;
         pill.getLocationInWindow(pillAt);
         glider.getLocationInWindow(rootAt);
@@ -1043,13 +1424,22 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      */
     private void setPlace(File picture) {
         String[] about = placesMode ? PlaceWallpapers.describe(picture) : null;
-        String title = about != null ? titleCase(about[0]) : null;
+        if (heroQuotes && picture != null) {
+            String[] q = QuoteStore.forPicture(this, picture.getName(), java.util.Calendar.getInstance(), quoteShift);
+            if (q != null) about = new String[]{q[0], q[1], q[2]};
+        }
+        String title = about != null ? (heroQuotes ? about[0] : titleCase(about[0])) : null;
         String overview = about != null ? about[1] : "";
         String country = about != null && about.length > 2 ? about[2] : "";
         if (title == null ? placeName == null : title.equals(placeName)) return;
         placeName = title;
         placeText = overview;
         placeCountry = country;
+        // Words for the Wisdom widget with none on screen yet, or none left to show (every kind switched off).
+        if (heroQuotes && (title == null || !heroShown)) {
+            showWisdom();
+            if (title == null) return;
+        }
         // When the shelf is up, the words fade out with the old picture and back in with the new
         // one, inside the picture's own cross-fade: swapped at once, the next place's name sat over
         // the last one's picture while it faded. The layout listener puts the shelf back where it
@@ -1058,7 +1448,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             heroShelf.animate().cancel();
             heroShelf.animate().alpha(0f).setDuration(reducedMotion ? 100 : 250).withEndAction(() -> {
                 setHeroText(title, country, overview);
-                if (heroShown) heroShelf.animate().alpha(1f).setDuration(reducedMotion ? 120 : 400).start();
+                if (heroShown) heroShelf.animate().alpha(heroQuotes && !widgetsIn ? 0f : 1f).setDuration(reducedMotion ? 120 : 400).start();
             }).start();
         }
     }
@@ -1186,14 +1576,21 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
         int previous = ambientColor;
         ambientColor = color;
+        if (tileGlow && glider != null) glider.setGlowColor(color);
         // Every app's glow is the same shape in a different colour, so the shape is drawn once and
         // each app only tints it. Drawing a fresh bitmap per move cost a CPU fill, half a megabyte
         // and a texture upload every time focus moved, which is what made moving around feel heavy
         // once every tile, not only the dock, tinted the room.
-        BitmapDrawable drawable = new BitmapDrawable(getResources(), ambientShape());
-        drawable.setGravity(Gravity.FILL);
-        drawable.setColorFilter(new android.graphics.PorterDuffColorFilter(
-                0xFF000000 | color, android.graphics.PorterDuff.Mode.SRC_IN));
+        android.graphics.drawable.Drawable drawable;
+        if (cornerGlow) {
+            drawable = new CornerGlow(color);
+        } else {
+            BitmapDrawable room = new BitmapDrawable(getResources(), ambientShape());
+            room.setGravity(Gravity.FILL);
+            room.setColorFilter(new android.graphics.PorterDuffColorFilter(
+                    0xFF000000 | color, android.graphics.PorterDuff.Mode.SRC_IN));
+            drawable = room;
+        }
         if (crossFade && old != null) {
             android.graphics.drawable.TransitionDrawable t = new android.graphics.drawable.TransitionDrawable(
                     new android.graphics.drawable.Drawable[]{old, drawable});
@@ -1221,6 +1618,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     private void hideShelf() {
+        if (heroQuotes) return;   // the Wisdom widget is not tied to the selected app
         if (!heroShown) return;
         heroShown = false;
         heroShelf.animate().alpha(0f).setDuration(reducedMotion ? 100 : 160).start();
@@ -1234,13 +1632,25 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void showAmbient(int color) {
         if (!ambientShown) {
             setAmbient(color);
-            ambient.animate().alpha(1f).setDuration(reducedMotion ? 160 : 600)
+            // The edge glow comes in quickly with each new app; the room tint more slowly.
+            ambient.animate().alpha(1f).setDuration(reducedMotion ? 160 : cornerGlow ? 400 : 600)
                     .setUpdateListener(a -> syncGlassGlow()).start();
             ambientShown = true;
         } else if (color != ambientColor) {
             setAmbient(color, !reducedMotion);
         }
+        // Left on one app for 30 seconds, the edge glow fades away; the next move brings it back.
+        if (cornerGlow) {
+            handler.removeCallbacks(ambientIdle);
+            handler.postDelayed(ambientIdle, 30_000L);
+        }
     }
+
+    private final Runnable ambientIdle = () -> {
+        if (!ambientShown) return;
+        ambientShown = false;
+        ambient.animate().alpha(0f).setDuration(1500).setUpdateListener(a -> syncGlassGlow()).start();
+    };
 
     private void hideGlass() {
         glassShown = false;
@@ -1276,6 +1686,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 gliderOnPill = false;
                 closeMenu(true);
             }, R.drawable.ic_move, getString(R.string.tile_move), -1, () -> startMove(key));
+        }
+        final ComponentName comp = adapter.componentAt(position);
+        if (adapter.isApp(position) && comp != null) {
+            addInputRow(rows, () -> closeMenu(false), R.drawable.ic_remove_home, getString(R.string.remove_home), -1, () -> {
+                AppAdapter.removeFromHome(this, comp);
+                reloadApps(false);
+            });
+            if (AppAdapter.removable(this, comp.getPackageName())) {
+                addInputRow(rows, () -> closeMenu(false), R.drawable.ic_delete, getString(R.string.uninstall), -1,
+                        () -> AppAdapter.uninstall(this, comp.getPackageName()));
+            }
         }
         addInputRow(rows, () -> closeMenu(false), R.drawable.ic_info, getString(R.string.tile_app_info), -1,
                 () -> adapter.openAppInfo(adapter.positionOf(key)));
@@ -1410,12 +1831,31 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             return position % COLUMNS == COLUMNS - 1 || position == count - 1;
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
-            if (position < COLUMNS) return false;          // dock row: let focus move to the top bar
+            if (position < COLUMNS) {
+                // Up from the dock: the widget above that side (Wisdom on the left, the score card on
+                // the right), then the prayer times, the weather and the top bar.
+                View near = position < COLUMNS / 2 ? heroShelf : eplCard, far = near == heroShelf ? eplCard : heroShelf;
+                for (View w : new View[]{near, far}) {
+                    if (w == heroShelf ? wisdomFocusable() : eplCard != null && eplCard.getVisibility() == View.VISIBLE) {
+                        w.requestFocus();
+                        return true;
+                    }
+                }
+                if (prayerRow.getVisibility() == View.VISIBLE) {
+                    prayerRow.requestFocus();
+                    return true;
+                }
+                return false;
+            }
             target = position - COLUMNS;
         } else {
             int lastRowStart = ((count - 1) / COLUMNS) * COLUMNS;
             if (position >= lastRowStart) return true;     // already on the last row: stay put
             target = Math.min(position + COLUMNS, count - 1);
+        }
+        if (target != position) {
+            playTick();
+            tickedAt = target;
         }
         focusTile(target);
         return true;
@@ -1460,6 +1900,1094 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     private void updateShamsiDate() {
         if (shamsi) shamsiDate.setText(Shamsi.today());
+    }
+
+    /** Six cells, a small name over its time, in the clock's typeface, then the Hijri date and the countdown. */
+    private void buildPrayerRow() {
+        android.graphics.Typeface outfit = getResources().getFont(R.font.outfit);
+        for (int i = 0; i < PrayerTimes.NAMES.length; i++) {
+            LinearLayout cell = new LinearLayout(this);
+            cell.setOrientation(LinearLayout.VERTICAL);
+            TextView name = new TextView(this);
+            name.setTypeface(outfit);
+            name.setFontVariationSettings("'wght' 600");
+            name.setTextSize(11f);
+            name.setLetterSpacing(0.14f);
+            name.setAllCaps(true);
+            name.setIncludeFontPadding(false);
+            name.setText(PrayerTimes.NAMES[i]);
+            // Room round the text for its glow when the row is selected; the row is pulled back by
+            // the same amount so nothing moves.
+            int g = Math.round(GLOW_ROOM * density);
+            name.setPadding(g, g, g, 0);
+            TextView time = new TextView(this);
+            time.setTypeface(outfit);
+            time.setFontVariationSettings("'wght' 450");
+            time.setTextSize(22f);
+            time.setIncludeFontPadding(false);
+            time.setPadding(g, Math.round(4 * density), g, g);
+            cell.addView(name);
+            cell.addView(time);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMarginEnd(Math.round(30 * density) - 2 * g);
+            prayerRow.addView(cell, lp);
+            prayerLabels[i] = name;
+            prayerClocks[i] = time;
+        }
+        prayerInfo = new TextView(this);
+        prayerInfo.setTypeface(outfit);
+        prayerInfo.setFontVariationSettings("'wght' 400");
+        prayerInfo.setTextSize(13f);
+        prayerInfo.setLetterSpacing(0.04f);
+        prayerInfo.setTextColor(0xB3FFFFFF);
+        // Two lines that sit level with the names and the times beside them.
+        prayerInfo.setIncludeFontPadding(false);
+        prayerInfo.setLineSpacing(10 * density, 1f);
+        prayerInfo.setGravity(Gravity.TOP);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lp.gravity = Gravity.TOP;
+        lp.topMargin = Math.round((2 + GLOW_ROOM) * density);
+        lp.setMarginStart(Math.round(6 * density));
+        prayerRow.addView(prayerInfo, lp);
+        buildWeatherLine(outfit);
+        findViewById(R.id.btnInputs).addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> {
+            if (r - l != orr - ol || l != ol) handler.post(this::fitPrayerRow);
+        });
+        if (!eplTeams.isEmpty()) buildEplCard(outfit);
+        prayerRow.setTranslationX(-GLOW_ROOM * density);
+        prayerRow.setTranslationY(-GLOW_ROOM * density);
+        // The row itself can be selected: its times glow, and OK chooses the sound for prayer times.
+        prayerRow.setFocusable(true);
+        prayerRow.setOnFocusChangeListener((v, has) -> {
+            widgetHint(v, has);
+            if (!has) {
+                shadePrayerText();
+                return;
+            }
+            for (int i = 0; i < prayerClocks.length; i++) {
+                prayerClocks[i].setShadowLayer(7 * density, 0, 0, 0xFFFFC46B);
+                prayerLabels[i].setShadowLayer(6 * density, 0, 0, 0xE6FFC46B);
+            }
+            prayerInfo.setShadowLayer(6 * density, 0, 0, 0xE6FFC46B);
+        });
+        prayerInfo.setTextColor(0xE6FFFFFF);
+        prayerInfo.setFontVariationSettings("'wght' 500");
+        shadePrayerText();
+        prayerRow.setOnClickListener(v -> choosePrayerSound());
+        prayerRow.setOnKeyListener(holdForMenu(this::prayerMenu, (v, keyCode, event) -> {
+            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+            switch (keyCode) {
+                case KeyEvent.KEYCODE_DPAD_UP:
+                    if (weatherLine != null && weatherLine.getVisibility() == View.VISIBLE) weatherLine.requestFocus();
+                    else findViewById(R.id.btnInputs).requestFocus();
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                    focusMiddle(wisdomFocusable() ? heroShelf : eplCard);
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                    if (eplCard != null && eplCard.getVisibility() == View.VISIBLE) eplCard.requestFocus();
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                    return true;
+                default:
+                    return false;
+            }
+        }));
+    }
+
+    /** The prayer row's scale last applied, so a fit that changes nothing does not relayout. */
+    private float prayerScale = -1f;
+    private int prayerGap = -1;
+
+    /**
+     * Keeps the prayer times, the Hijri date and the countdown between the clock's left edge and the
+     * Inputs button's left edge: the gaps between the times close up first, then the text shrinks a
+     * little if that is not enough.
+     */
+    private void fitPrayerRow() {
+        View inputs = findViewById(R.id.btnInputs);
+        if (inputs.getVisibility() != View.VISIBLE) inputs = findViewById(R.id.btnWifi);
+        View clock = findViewById(R.id.clock);
+        if (prayerInfo == null || inputs.getWidth() == 0 || clock.getWidth() == 0) return;
+        int[] a = new int[2], b = new int[2];
+        clock.getLocationOnScreen(a);
+        inputs.getLocationOnScreen(b);
+        // From the clock's left edge to the Inputs button's left edge, a small gap short of it.
+        int target = b[0] - a[0] - Math.round(8 * density);
+        int g = Math.round(GLOW_ROOM * density);
+        int defaultGap = Math.round(30 * density) - 2 * g, minGap = Math.round(14 * density) - 2 * g;
+        int infoStart = Math.round(6 * density);
+        float sd = getResources().getDisplayMetrics().scaledDensity;
+        android.text.TextPaint name = new android.text.TextPaint(prayerLabels[0].getPaint());
+        android.text.TextPaint time = new android.text.TextPaint(prayerClocks[0].getPaint());
+        android.text.TextPaint info = new android.text.TextPaint(prayerInfo.getPaint());
+        float scale = 1f;
+        int gap = defaultGap;
+        for (; scale >= 0.7f; scale -= 0.025f) {
+            name.setTextSize(11f * scale * sd);
+            time.setTextSize(22f * scale * sd);
+            info.setTextSize(13f * scale * sd);
+            float cells = 0;
+            for (int i = 0; i < prayerClocks.length; i++) {
+                cells += Math.max(name.measureText(prayerLabels[i].getText().toString().toUpperCase(Locale.ROOT)),
+                        time.measureText(prayerClocks[i].getText().toString())) + 2 * g;
+            }
+            float infoW = 0;
+            for (String line : prayerInfo.getText().toString().split("\n")) infoW = Math.max(infoW, info.measureText(line));
+            // The row is pulled left by g, so the first cell's padding does not count.
+            float fixed = cells - g + infoStart + infoW + 2;
+            gap = (int) Math.floor((target - fixed) / prayerClocks.length);
+            if (gap >= minGap) {
+                gap = Math.min(gap, defaultGap);
+                break;
+            }
+        }
+        scale = Math.max(scale, 0.7f);
+        if (Math.abs(scale - prayerScale) < 0.001f && gap == prayerGap) return;
+        prayerScale = scale;
+        prayerGap = gap;
+        for (int i = 0; i < prayerClocks.length; i++) {
+            prayerLabels[i].setTextSize(11f * scale);
+            prayerClocks[i].setTextSize(22f * scale);
+            View cell = (View) prayerClocks[i].getParent();
+            LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) cell.getLayoutParams();
+            lp.setMarginEnd(Math.max(gap, minGap));
+            cell.setLayoutParams(lp);
+        }
+        prayerInfo.setTextSize(13f * scale);
+        prayerInfo.setLineSpacing(10 * density * scale, 1f);
+        // Not wider than the room: the countdown and the date wrap rather than run past Inputs.
+        ViewGroup.LayoutParams rowLp = prayerRow.getLayoutParams();
+        int width = target + g;
+        if (rowLp.width != width) {
+            rowLp.width = width;
+            prayerRow.setLayoutParams(rowLp);
+        }
+    }
+
+    /** A soft dark halo under the prayer texts: they read on white and bright pictures too. */
+    private void shadePrayerText() {
+        for (int i = 0; i < prayerClocks.length; i++) {
+            if (prayerClocks[i] == null) return;
+            prayerClocks[i].setShadowLayer(5 * density, 0, 0, 0xB3000000);
+            prayerLabels[i].setShadowLayer(4 * density, 0, 0, 0xB3000000);
+        }
+        prayerInfo.setShadowLayer(4 * density, 0, 0, 0xB3000000);
+    }
+
+    /**
+     * The prayer-time sound: the built-in azans, the family's own recordings, a chime or silence, each
+     * heard as it is chosen. "Import" brings in audio from the Download folder (a browser or LocalSend);
+     * the wallpaper screen's phone page takes audio files too.
+     */
+    private void choosePrayerSound() {
+        List<String> keys = new ArrayList<>(java.util.Arrays.asList(PrayerAlarm.SOUNDS));
+        List<String> names = new ArrayList<>(java.util.Arrays.asList(PrayerAlarm.soundNames(this)));
+        for (String h : PrayerAlarm.hidden(this)) {
+            int i = keys.indexOf(h);
+            if (i >= 0) {
+                keys.remove(i);
+                names.remove(i);
+            }
+        }
+        for (String[] own : PrayerAlarm.ownSounds(this)) {
+            keys.add(keys.size() - 2, own[0]);    // before the chime and silence
+            names.add(names.size() - 2, own[1]);
+        }
+        int checked = Math.max(0, keys.indexOf(PrayerAlarm.sound(this)));
+        new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle(R.string.azan_title)
+                .setSingleChoiceItems(names.toArray(new String[0]), checked, (d, which) -> {
+                    PrayerAlarm.setSound(this, keys.get(which));
+                    PrayerAlarm.play(this, keys.get(which));   // a preview
+                })
+                .setNeutralButton(R.string.azan_import, (d, w) -> new Thread(() -> {
+                    int n = PrayerAlarm.importFromDownloads(getApplicationContext());
+                    handler.post(() -> {
+                        Toast.makeText(this, n == 0 ? getString(R.string.azan_none)
+                                : getString(R.string.azan_added, n), Toast.LENGTH_LONG).show();
+                        if (n > 0 && !isDestroyed()) choosePrayerSound();
+                    });
+                }, "azan-import").start())
+                .setNegativeButton(R.string.azan_delete, (d, w) -> deleteAzan())
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    /**
+     * Lists the azans: one chosen is deleted after a yes (the family's own recordings) or taken off the
+     * list (the built-in ones, which live in the app). Chime and silence always stay.
+     */
+    private void deleteAzan() {
+        List<String[]> own = new ArrayList<>();
+        java.util.Set<String> hidden = PrayerAlarm.hidden(this);
+        for (int i = 0; i < PrayerAlarm.SOUNDS.length; i++) {
+            String k = PrayerAlarm.SOUNDS[i];
+            if (k.startsWith("azan") && !hidden.contains(k)) own.add(new String[]{k, PrayerAlarm.soundNames(this)[i]});
+        }
+        own.addAll(PrayerAlarm.ownSounds(this));
+        if (own.isEmpty()) return;
+        String[] names = new String[own.size()];
+        for (int i = 0; i < names.length; i++) names[i] = own.get(i)[1];
+        new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle(R.string.azan_delete_which)
+                .setItems(names, (d, which) -> new android.app.AlertDialog.Builder(this,
+                        android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                        .setTitle(getString(R.string.delete_x, names[which]))
+                        .setPositiveButton(R.string.delete, (d2, w2) -> {
+                            String key = own.get(which)[0];
+                            java.io.File dir = PrayerAlarm.azanDir(this);
+                            if (key.startsWith(PrayerAlarm.FILE)) {
+                                if (dir != null) new java.io.File(dir, key.substring(PrayerAlarm.FILE.length())).delete();
+                            } else {
+                                PrayerAlarm.hide(this, key);
+                            }
+                            // The sound in use went: the chime takes over until another is chosen.
+                            if (key.equals(PrayerAlarm.sound(this))) PrayerAlarm.setSound(this, "chime");
+                            choosePrayerSound();
+                        })
+                        .setNegativeButton(R.string.cancel, (d2, w2) -> choosePrayerSound())
+                        .show())
+                .show();
+    }
+
+    /**
+     * The weather card under the clock, as wide as the clock and the date together: place, temperature
+     * and sky; OK opens the week's forecast.
+     */
+    private void buildWeatherLine(android.graphics.Typeface outfit) {
+        weatherLine = new TextView(this);
+        weatherLine.setTypeface(outfit);
+        weatherLine.setFontVariationSettings("'wght' 500");
+        weatherLine.setTextSize(13f);
+        weatherLine.setLetterSpacing(0.03f);
+        weatherLine.setTextColor(0xE6FFFFFF);
+        weatherLine.setIncludeFontPadding(false);
+        weatherLine.setSingleLine(true);
+        weatherLine.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        weatherLine.setGravity(Gravity.CENTER);
+        int padH = Math.round(10 * density), padV = Math.round(6 * density);
+        weatherLine.setPadding(padH, padV, padH, padV);
+        weatherLine.setFocusable(true);
+        weatherLine.setClickable(true);
+        weatherLine.setBackground(eplBackground(false));
+        weatherLine.setVisibility(View.GONE);
+        weatherLine.setOnFocusChangeListener((v, has) -> {
+            v.setBackground(eplBackground(has));
+            weatherLine.setShadowLayer(has ? 10 * density : 0, 0, 0, 0xCCFFC46B);
+            v.animate().scaleX(has ? 1.05f : 1f).scaleY(has ? 1.05f : 1f).setDuration(160).start();
+        });
+        weatherLine.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(this, WeatherActivity.class));
+            } catch (Exception ignored) {
+            }
+        });
+        weatherLine.setOnKeyListener((v, keyCode, event) -> {
+            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+            switch (keyCode) {
+                case KeyEvent.KEYCODE_DPAD_UP:
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                    findViewById(R.id.btnInputs).requestFocus();
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                    if (prayerRow.getVisibility() == View.VISIBLE) prayerRow.requestFocus();
+                    else focusMiddle(wisdomFocusable() ? heroShelf : eplCard);
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                    return true;
+                default:
+                    return false;
+            }
+        });
+        // Between the top bar and the prayer times, its left edge on the clock's.
+        ViewGroup column = (ViewGroup) prayerRow.getParent();
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = Math.round(8 * density);
+        column.addView(weatherLine, column.indexOfChild(prayerRow), lp);
+        // Room for its zoom and glow when selected: nothing round it cuts them off.
+        for (ViewGroup g = column; g != null && g.getId() != R.id.root; g = g.getParent() instanceof ViewGroup ? (ViewGroup) g.getParent() : null) {
+            g.setClipChildren(false);
+            g.setClipToPadding(false);
+        }
+        View clock = findViewById(R.id.clock);
+        TextView date = findViewById(R.id.date);
+        View.OnLayoutChangeListener fit = (v, l, t, r, b2, ol, ot, orr, ob) -> {
+            // From the clock's left edge to the end of the date's text.
+            int[] c = new int[2], col = new int[2];
+            clock.getLocationOnScreen(c);
+            column.getLocationOnScreen(col);
+            int[] dt = new int[2];
+            date.getLocationOnScreen(dt);
+            int right = dt[0] + Math.round(date.getPaint().measureText(date.getText().toString().toUpperCase(Locale.getDefault())));
+            int width = right - c[0];
+            int margin = c[0] - col[0] - column.getPaddingLeft();
+            if (width <= 0) return;
+            if (lp.width != width || lp.getMarginStart() != margin) {
+                lp.width = width;
+                lp.setMarginStart(margin);
+                handler.post(() -> {
+                    weatherLine.setLayoutParams(lp);
+                    fitWeatherText();
+                });
+            }
+        };
+        clock.addOnLayoutChangeListener(fit);
+        date.addOnLayoutChangeListener(fit);
+        showWeather(Weather.cached(this));
+    }
+
+    private void showWeather(Weather.Report r) {
+        if (weatherLine == null || r == null) return;
+        weatherLine.setText(r.line(this));
+        weatherLine.setVisibility(View.VISIBLE);
+        fitWeatherText();
+    }
+
+    /** The whole line inside the card's fixed width: a smaller size, never cut off, down to 10sp. */
+    private void fitWeatherText() {
+        ViewGroup.LayoutParams lp = weatherLine.getLayoutParams();
+        if (lp == null || lp.width <= 0) return;
+        int room = lp.width - weatherLine.getPaddingLeft() - weatherLine.getPaddingRight();
+        String text = weatherLine.getText().toString();
+        android.text.TextPaint probe = new android.text.TextPaint(weatherLine.getPaint());
+        float sp = 13f;
+        for (; sp > 10f; sp -= 0.5f) {
+            probe.setTextSize(sp * getResources().getDisplayMetrics().scaledDensity);
+            if (probe.measureText(text) <= room) break;
+        }
+        weatherLine.setTextSize(sp);
+    }
+
+    private void refreshWeatherIfDue() {
+        if (weatherLine == null || weatherRefreshRunning || !Weather.due(this)) return;
+        weatherRefreshRunning = true;
+        new Thread(() -> {
+            Weather.Report r = Weather.refresh(getApplicationContext());
+            handler.post(() -> {
+                weatherRefreshRunning = false;
+                if (!isDestroyed()) showWeather(r != null ? r : Weather.cached(this));
+            });
+        }, "weather").start();
+    }
+
+    /** The Premier League card at the right end of the prayer row: the latest matches, OK for the table. */
+    private void buildEplCard(android.graphics.Typeface outfit) {
+        eplCard = new TextView(this);
+        eplCard.setTypeface(outfit);
+        eplCard.setFontVariationSettings("'wght' 400");
+        eplCard.setTextSize(13f);
+        eplCard.setTextColor(0xE6FFFFFF);
+        eplCard.setLineSpacing(3 * density, 1f);
+        eplCard.setFocusable(true);
+        eplCard.setClickable(true);
+        int padH = Math.round(16 * density), padV = Math.round(9 * density);
+        eplCard.setPadding(padH, padV, padH, padV);
+        eplCard.setBackground(eplBackground(false));
+        eplCard.setVisibility(View.GONE);
+        eplCard.setOnFocusChangeListener((v, has) -> {
+            widgetHint(v, has);
+            v.setBackground(eplBackground(has));
+            ((TextView) v).setShadowLayer(has ? 14 * density : 0, 0, 0, 0xCCFFC46B);
+            v.animate().scaleX(has ? 1.04f : 1f).scaleY(has ? 1.04f : 1f).setDuration(160).start();
+        });
+        eplCard.setOnClickListener(v -> showEplTable());
+        eplCard.setOnKeyListener(holdForMenu(this::eplMenu, (v, keyCode, event) -> {
+            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+            if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                // Up the screen in order: the prayer times, the weather, then the top bar.
+                if (prayerRow != null && prayerRow.getVisibility() == View.VISIBLE) prayerRow.requestFocus();
+                else if (weatherLine != null && weatherLine.getVisibility() == View.VISIBLE) weatherLine.requestFocus();
+                else findViewById(R.id.btnSettings).requestFocus();
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                focusTile(lastFocused % COLUMNS);
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && wisdomFocusable()) {
+                heroShelf.requestFocus();
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && prayerRow.getVisibility() == View.VISIBLE) {
+                prayerRow.requestFocus();
+                return true;
+            }
+            return keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
+        }));
+        // Level with the verse on the left, its right edge under the Settings button.
+        FrameLayout home = findViewById(R.id.root);
+        home.addView(eplCard, home.indexOfChild(heroShelf) + 1, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        eplCard.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> positionEplCard());
+        heroShelf.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> positionEplCard());
+    }
+
+
+    private void positionEplCard() {
+        if (eplCard == null || eplCard.getWidth() == 0) return;
+        View settings = findViewById(R.id.btnSettings);
+        View wifi = btnWifi.getVisibility() == View.VISIBLE ? btnWifi : findViewById(R.id.btnWallpaper);
+        if (settings.getWidth() == 0 || wifi.getWidth() == 0) return;
+        // On-screen places, the top row's slide to line up with the dock included.
+        int[] at = new int[2], home = new int[2];
+        findViewById(R.id.root).getLocationOnScreen(home);
+        settings.getLocationOnScreen(at);
+        float right = at[0] - home[0] + settings.getWidth();
+        float buttonsBottom = at[1] - home[1] + settings.getHeight();
+        wifi.getLocationOnScreen(at);
+        float left = at[0] - home[0];
+        // As wide as the top bar from Wi-Fi to Settings, or wider leftwards when the lines need it
+        // (scores and the live minute are longer than kick-off times), so nothing wraps.
+        int width = Math.max(Math.round(right - left), eplNeeded);
+        left = right - width;
+        ViewGroup.LayoutParams lp = eplCard.getLayoutParams();
+        if (width > 0 && lp.width != width) {
+            // Not during this layout pass: a size asked for mid-layout waited for the next one.
+            handler.post(() -> {
+                lp.width = width;
+                eplCard.setLayoutParams(lp);
+                updateEplCard();   // tab stops follow the new width
+            });
+        }
+        eplCard.setX(left);
+        float top = heroQuotes || heroShelf.getHeight() == 0 ? widgetTop() : heroShelf.getY();
+        eplCard.setY(top);
+    }
+
+    private android.graphics.drawable.GradientDrawable eplBackground(boolean focused) {
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setCornerRadius(16 * density);
+        bg.setColor(focused ? 0x4DFFC46B : 0x1FFFFFFF);
+        bg.setStroke(Math.round(focused ? 2.5f * density : 1.5f * density), focused ? 0xFFFFC46B : 0x33FFFFFF);
+        return bg;
+    }
+
+    private void refreshEplIfDue() {
+        if (eplCard == null || eplRefreshRunning || !EplScores.due()) return;
+        eplRefreshRunning = true;
+        final Set<String> teams = eplTeams;
+        new Thread(() -> {
+            EplScores.refresh(teams);
+            handler.post(() -> {
+                eplRefreshRunning = false;
+                if (!isDestroyed()) updateEplCard();
+            });
+        }, "epl-scores").start();
+    }
+
+    private void updateEplCard() {
+        if (eplCard == null) return;
+        List<EplScores.Match> latest = EplScores.latest(eplTeams, 4);
+        if (latest.isEmpty() || !HomeWidgets.shown(this, HomeWidgets.EPL)) {
+            if (!eplCard.hasFocus()) eplCard.setVisibility(View.GONE);
+            return;
+        }
+        boolean is24 = android.text.format.DateFormat.is24HourFormat(this);
+        String head = getString(R.string.epl_head, EplScores.week);
+        StringBuilder sb = new StringBuilder(head);
+        // Where each finished match's winner (name and goals) sits in the text, to set it in bold.
+        List<int[]> winners = new ArrayList<>();
+        for (EplScores.Match m : latest) {
+            sb.append('\n');
+            int at = sb.length();
+            String line = EplScores.line(m, is24);
+            sb.append(line);
+            int won = EplScores.winner(m);
+            if (won == 0) continue;
+            String part = won > 0 ? m.homeAbbr + " " + m.homeScore : m.awayScore + " " + m.awayAbbr;
+            int i = won > 0 ? line.indexOf(part) : line.indexOf(part, line.indexOf('\u2013'));
+            if (i >= 0) winners.add(new int[]{at + i, at + i + part.length()});
+        }
+        SpannableString text = new SpannableString(sb);
+        for (int[] w : winners) text.setSpan(new Weight(WINNER_WEIGHT), w[0], w[1], Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        eplFitTabs(text, sb.toString().split("\n"), eplCard);
+        text.setSpan(new android.text.style.ForegroundColorSpan(0xFFFFC46B), 0, head.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        text.setSpan(new android.text.style.RelativeSizeSpan(0.8f), 0, head.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        eplCard.setText(text);
+        eplCard.setVisibility(View.VISIBLE);
+    }
+
+    private static final int WINNER_WEIGHT = 700;
+
+    /** A weight of the card's own variable font (Outfit), so the bold is real rather than smeared. */
+    static final class Weight extends android.text.style.MetricAffectingSpan {
+        private final String wght;
+
+        Weight(int weight) {
+            wght = "'wght' " + weight;
+        }
+
+        @Override
+        public void updateDrawState(android.text.TextPaint p) {
+            p.setFontVariationSettings(wght);
+        }
+
+        @Override
+        public void updateMeasureState(@androidx.annotation.NonNull android.text.TextPaint p) {
+            p.setFontVariationSettings(wght);
+        }
+    }
+
+    /** The card's width its widest line needs, padding included; 0 until there are lines. */
+    private int eplNeeded;
+
+    /**
+     * Tab stops measured from the widest entry of each column, so the date and time columns line up
+     * whatever the lines hold, and the card width they need (see {@link #positionEplCard}).
+     */
+    private void eplFitTabs(SpannableString text, String[] lines, TextView view) {
+        android.graphics.Paint paint = view.getPaint();
+        // The match column is measured in the winner's weight: bold names are a little wider.
+        android.graphics.Paint bold = new android.graphics.Paint(paint);
+        bold.setFontVariationSettings("'wght' " + WINNER_WEIGHT);
+        float[] col = new float[3];
+        for (int i = 1; i < lines.length; i++) {   // line 0 is the heading
+            String[] cells = lines[i].split("\t");
+            for (int c = 0; c < cells.length && c < 3; c++) col[c] = Math.max(col[c], (c == 0 ? bold : paint).measureText(cells[c]));
+        }
+        float gap = 16 * density;
+        int first = Math.round(col[0] + gap), second = Math.round(col[0] + gap + col[1] + gap);
+        text.setSpan(new android.text.style.TabStopSpan.Standard(first), 0, text.length(), Spanned.SPAN_INCLUSIVE_INCLUSIVE);
+        text.setSpan(new android.text.style.TabStopSpan.Standard(second), 0, text.length(), Spanned.SPAN_INCLUSIVE_INCLUSIVE);
+        int needed = Math.round(second + col[2] + 4 * density) + view.getPaddingLeft() + view.getPaddingRight();
+        if (needed != eplNeeded) {
+            eplNeeded = needed;
+            handler.post(this::positionEplCard);
+        }
+    }
+
+    /** Tab stops at shares of the card's inner width, so the date and time columns line up. */
+    private void eplTabs(SpannableString text, float date, float time, TextView view) {
+        // The width the card is being given, not the one it last had: it may not have been laid out yet.
+        int target = view.getLayoutParams() != null && view.getLayoutParams().width > 0
+                ? view.getLayoutParams().width : view.getWidth();
+        int inner = target - view.getPaddingLeft() - view.getPaddingRight();
+        if (inner <= 0) inner = Math.round(300 * density);
+        text.setSpan(new android.text.style.TabStopSpan.Standard(Math.round(inner * date)), 0, text.length(), Spanned.SPAN_INCLUSIVE_INCLUSIVE);
+        text.setSpan(new android.text.style.TabStopSpan.Standard(Math.round(inner * time)), 0, text.length(), Spanned.SPAN_INCLUSIVE_INCLUSIVE);
+    }
+
+    private String eplOnHomeLabel() {
+        return getString(HomeWidgets.shown(this, HomeWidgets.EPL) ? R.string.epl_hide_home : R.string.epl_show_home);
+    }
+
+    /** Hides a widget from Home and says where it comes back from. */
+    private void hideWidget(String card, String tile) {
+        HomeWidgets.setShown(this, card, false);
+        focusTile(lastFocused % COLUMNS);
+        updateEplCard();
+        updatePrayerTimes();
+        showWisdom();
+        Toast.makeText(this, getString(R.string.hidden_toast, tile), Toast.LENGTH_LONG).show();
+    }
+
+    /** A small list of what a widget can do, opened by holding OK on it. */
+    private void widgetMenu(String title, String[] labels, Runnable[] acts) {
+        new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle(title)
+                .setItems(labels, (dlg, which) -> acts[which].run())
+                .show();
+    }
+
+    private void eplMenu() {
+        widgetMenu(getString(R.string.tile_epl), new String[]{getString(R.string.menu_epl_table), getString(R.string.menu_hide)},
+                new Runnable[]{this::showEplTable, () -> hideWidget(HomeWidgets.EPL, getString(R.string.tile_epl))});
+    }
+
+    private void prayerMenu() {
+        widgetMenu(getString(R.string.tile_prayer), new String[]{getString(R.string.menu_prayer_page), getString(R.string.menu_azan),
+                        getString(R.string.menu_hide)},
+                new Runnable[]{() -> open(new Intent(this, PrayerActivity.class)), this::choosePrayerSound,
+                        () -> hideWidget(HomeWidgets.PRAYER, getString(R.string.tile_prayer))});
+    }
+
+    private void wisdomMenu() {
+        widgetMenu(getString(R.string.tile_wisdom), new String[]{getString(R.string.menu_wisdom_next),
+                        getString(R.string.menu_wisdom_manage), getString(R.string.menu_hide)},
+                new Runnable[]{this::nextWisdom, () -> open(new Intent(this, QuotesActivity.class)),
+                        () -> hideWidget(HomeWidgets.QUOTES, getString(R.string.tile_wisdom))});
+    }
+
+    /**
+     * OK pressed and let go is a click; OK held for most of a second opens the widget's menu. The
+     * widget takes OK itself so Android's own long press, which a remote does not always send, is
+     * not needed.
+     */
+    private View.OnKeyListener holdForMenu(Runnable menu, View.OnKeyListener keys) {
+        final boolean[] fired = {false};
+        final Runnable open = () -> {
+            fired[0] = true;
+            menu.run();
+        };
+        return (v, keyCode, event) -> {
+            if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    if (event.getRepeatCount() == 0) {
+                        fired[0] = false;
+                        handler.postDelayed(open, 700);
+                    }
+                    return true;
+                }
+                if (event.getAction() == KeyEvent.ACTION_UP) {
+                    handler.removeCallbacks(open);
+                    if (!fired[0]) v.performClick();
+                    fired[0] = false;
+                    return true;
+                }
+            }
+            return keys.onKey(v, keyCode, event);
+        };
+    }
+
+    private TextView hint;
+
+    /** "Tahan OK · pilihan" under a widget while it is selected, so its menu can be found. */
+    private void widgetHint(View widget, boolean on) {
+        if (hint == null) {
+            hint = new TextView(this);
+            hint.setText(R.string.widget_hint);
+            hint.setTypeface(getResources().getFont(R.font.outfit));
+            hint.setTextSize(11.5f);
+            hint.setTextColor(0xE6FFFFFF);
+            int p = Math.round(6 * density);
+            hint.setPadding(Math.round(10 * density), Math.round(3 * density), Math.round(10 * density), Math.round(3 * density));
+            android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+            bg.setColor(0xB30B0E16);
+            bg.setCornerRadius(12 * density);
+            hint.setBackground(bg);
+            hint.setAlpha(0f);
+            root.addView(hint, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        if (!on) {
+            hint.animate().alpha(0f).setDuration(120).start();
+            return;
+        }
+        int[] at = new int[2], home = new int[2];
+        root.getLocationOnScreen(home);
+        widget.getLocationOnScreen(at);
+        hint.bringToFront();
+        hint.setX(at[0] - home[0] + 4 * density);
+        hint.setY(at[1] - home[1] + widget.getHeight() * widget.getScaleY() + 6 * density);
+        hint.animate().alpha(1f).setStartDelay(250).setDuration(200).start();
+    }
+
+    // ---- the Wisdom widget ---------------------------------------------------------------------
+
+    /** Where the widgets under the prayer times begin: below the lowest of the clock, weather and prayer rows. */
+    private float widgetTop() {
+        int[] at = new int[2], home = new int[2];
+        root.getLocationOnScreen(home);
+        float bottom = 0;
+        for (View v : new View[]{findViewById(R.id.leftBlock), weatherLine, prayerRow}) {
+            if (v == null || v.getVisibility() != View.VISIBLE || v.getHeight() == 0) continue;
+            v.getLocationOnScreen(at);
+            bottom = Math.max(bottom, at[1] - home[1] + v.getHeight());
+        }
+        return bottom + 30 * density;
+    }
+
+    private boolean wisdomFocusable() {
+        return heroQuotes && HomeWidgets.shown(this, HomeWidgets.QUOTES) && placeName != null;
+    }
+
+    /** The Wisdom widget can be selected: OK shows other words, holding OK opens its menu. */
+    private void setupWisdomWidget() {
+        int p = Math.round(14 * density);
+        heroShelf.setPadding(p, Math.round(10 * density), p, Math.round(12 * density));
+        ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) heroShelf.getLayoutParams();
+        lp.setMarginStart(lp.getMarginStart() - p);
+        heroShelf.setLayoutParams(lp);
+        heroShelf.setFocusable(true);
+        heroShelf.setClickable(true);
+        heroShelf.setOnClickListener(v -> nextWisdom());
+        heroShelf.setOnFocusChangeListener((v, has) -> {
+            widgetHint(v, has);
+            v.setBackground(has ? eplBackground(true) : null);
+        });
+        heroShelf.setOnKeyListener(holdForMenu(this::wisdomMenu, (v, keyCode, event) -> {
+            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+            switch (keyCode) {
+                case KeyEvent.KEYCODE_DPAD_UP:
+                    if (prayerRow.getVisibility() == View.VISIBLE) prayerRow.requestFocus();
+                    else if (weatherLine != null && weatherLine.getVisibility() == View.VISIBLE) weatherLine.requestFocus();
+                    else findViewById(R.id.btnInputs).requestFocus();
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                    if (eplCard != null && eplCard.getVisibility() == View.VISIBLE) eplCard.requestFocus();
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                    focusTile(lastFocused % COLUMNS);
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                    return true;
+                default:
+                    return false;
+            }
+        }));
+        // The prayer times or weather appearing or going moves the widgets up or down with them.
+        ((View) prayerRow.getParent()).addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> {
+            heroShelf.setY(widgetTop());
+            positionEplCard();
+        });
+    }
+
+    /** Down from the rows above: the Wisdom widget or the score card, whichever {@code prefer} is, else the other, else the dock. */
+    private void focusMiddle(View prefer) {
+        View other = prefer == heroShelf ? eplCard : heroShelf;
+        for (View w : new View[]{prefer, other}) {
+            if (w == null) continue;
+            if (w == heroShelf ? wisdomFocusable() : eplCard != null && eplCard.getVisibility() == View.VISIBLE) {
+                w.requestFocus();
+                return;
+            }
+        }
+        focusTile(lastFocused % COLUMNS);
+    }
+
+    /** The Wisdom and score widgets fade out while a row below the dock is selected, and back with the dock. */
+    private boolean widgetsIn = true;
+
+    private void fadeWidgets(boolean in) {
+        widgetsIn = in;
+        float to = in ? 1f : 0f;
+        int ms = reducedMotion ? 80 : in ? 260 : 160;
+        if (eplCard != null && eplCard.getAlpha() != to) eplCard.animate().alpha(to).setDuration(ms).start();
+        if (heroQuotes && heroShown && heroShelf.getAlpha() != to) heroShelf.animate().alpha(to).setDuration(ms).start();
+    }
+
+    /** Shows the Wisdom widget, or hides it when switched off. */
+    private void showWisdom() {
+        if (!heroQuotes) return;
+        boolean on = HomeWidgets.shown(this, HomeWidgets.QUOTES) && placeName != null;
+        heroShelf.setFocusable(on);
+        if (!on) {
+            if (heroShelf.hasFocus()) focusTile(lastFocused % COLUMNS);
+            heroShelf.animate().cancel();
+            heroShelf.setAlpha(0f);
+            heroShown = false;
+            return;
+        }
+        if (!placeName.contentEquals(heroName.getText())) setHeroText(placeName, placeCountry, placeText);
+        heroShelf.setY(widgetTop());
+        if (!heroShown) {
+            heroShelf.animate().cancel();
+            if (firstFrameHeld || resuming || reducedMotion) heroShelf.setAlpha(1f);
+            else heroShelf.animate().alpha(1f).setDuration(260).start();
+        }
+        heroShown = true;
+    }
+
+    /** OK on the Wisdom widget: other words for the same picture. */
+    private int quoteShift;
+
+    private void nextWisdom() {
+        quoteShift++;
+        if (wallName != null) setPlace(new File(wallName));
+    }
+
+    /** The table on the left, the followed teams' matches on the right; OK on a match looks for its highlights. */
+    private void showEplTable() {
+        if (eplDialog != null) eplDialog.dismiss();
+        Dialog d = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        eplDialog = d;
+        android.graphics.Typeface outfit = getResources().getFont(R.font.outfit);
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.HORIZONTAL);
+        page.setBackgroundColor(0xF2080A10);
+        int pad = Math.round(48 * density);
+        page.setPadding(pad, Math.round(36 * density), pad, Math.round(24 * density));
+
+        LinearLayout tableCol = new LinearLayout(this);
+        tableCol.setOrientation(LinearLayout.VERTICAL);
+        tableCol.addView(eplText(outfit, getString(R.string.epl_table), 26f, 0xFFFFFFFF, 300));
+        StringBuilder rows = new StringBuilder();
+        for (EplScores.Row r : EplScores.table) {
+            rows.append(String.format(Locale.ROOT, "%2s  %-16s %3s %5s %4s%n", r.rank, r.team, r.played, r.diff, r.points));
+        }
+        TextView t = eplText(android.graphics.Typeface.MONOSPACE, rows.length() == 0 ? getString(R.string.no_data) :
+                String.format(Locale.ROOT, "%2s  %-16s %3s %5s %4s%n", "#", "Team", "P", "GD", "Pts") + rows, 13f, 0xE6FFFFFF, 400);
+        t.setLineSpacing(2 * density, 1f);
+        tableCol.addView(t);
+        page.addView(tableCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.1f));
+
+        boolean is24 = android.text.format.DateFormat.is24HourFormat(this);
+
+        LinearLayout matchCol = new LinearLayout(this);
+        matchCol.setOrientation(LinearLayout.VERTICAL);
+        matchCol.addView(eplText(outfit, getString(R.string.epl_week_ok, EplScores.week), 22f, 0xFFFFFFFF, 300));
+        View first = eplLink(matchCol, outfit, getString(R.string.epl_channel), () -> openYouTube(
+                "https://www.youtube.com/channel/" + EplScores.CHANNEL, "Premier League"));
+        eplLink(matchCol, outfit, getString(R.string.epl_best, EplScores.week),
+                () -> searchHighlights("Premier League Matchweek " + EplScores.week + " best moments goals"));
+        // Hidden from Home by holding OK on the card, it comes back from here.
+        TextView[] onHome = new TextView[1];
+        onHome[0] = eplLink(matchCol, outfit, eplOnHomeLabel(), () -> {
+            HomeWidgets.setShown(this, HomeWidgets.EPL, !HomeWidgets.shown(this, HomeWidgets.EPL));
+            onHome[0].setText(eplOnHomeLabel());
+            updateEplCard();
+        });
+        for (EplScores.Match m : EplScores.matches) {
+            eplLink(matchCol, outfit, null, () -> searchHighlights(m.home + " vs " + m.away + " highlights"))
+                    .setText(eplColumns(EplScores.line(m, is24) + "\t" + m.home + " v " + m.away));
+        }
+        // After this week's matches: each followed team's next match.
+        if (!EplScores.next.isEmpty()) {
+            TextView head = eplText(outfit, getString(R.string.epl_next), 22f, 0xFFFFC46B, 300);
+            head.setPadding(0, Math.round(18 * density), 0, Math.round(6 * density));
+            matchCol.addView(head);
+            for (EplScores.Match m : EplScores.next) {
+                eplLink(matchCol, outfit, null, () -> searchHighlights(m.home + " vs " + m.away + " preview"))
+                        .setText(eplColumns(EplScores.line(m, is24) + "\t" + m.home + " v " + m.away));
+            }
+        }
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.setClipToPadding(false);
+        scroll.addView(matchCol);
+        page.addView(scroll, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.15f));
+        d.setContentView(page);
+        d.show();
+        first.requestFocus();
+    }
+
+    /** One focusable line in the EPL screen: small, on one line, lit when selected. */
+    private TextView eplLink(LinearLayout col, android.graphics.Typeface face, String text, Runnable act) {
+        TextView row = eplText(face, text == null ? "" : text, 13f, 0xE6FFFFFF, 400);
+        row.setSingleLine(true);
+        row.setEllipsize(TextUtils.TruncateAt.END);
+        row.setFocusable(true);
+        row.setClickable(true);
+        int p = Math.round(8 * density);
+        row.setPadding(p, p, p, p);
+        row.setOnFocusChangeListener((v, has) -> v.setBackground(has ? eplBackground(true) : null));
+        row.setOnClickListener(v -> act.run());
+        col.addView(row);
+        return row;
+    }
+
+    /** Match, date, time and teams in fixed columns, so every line lines up. */
+    private SpannableString eplColumns(String line) {
+        SpannableString s = new SpannableString(line);
+        for (int stop : new int[]{108, 196, 262}) {
+            s.setSpan(new android.text.style.TabStopSpan.Standard(Math.round(stop * density)), 0, s.length(),
+                    Spanned.SPAN_INCLUSIVE_INCLUSIVE);
+        }
+        return s;
+    }
+
+    /** A YouTube page in the YouTube app, else wherever links open; a search if neither will. */
+    private void openYouTube(String url, String fallbackSearch) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage("com.google.android.youtube.tv")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (ActivityNotFoundException e) {
+            searchHighlights(fallbackSearch);
+        }
+    }
+
+    private TextView eplText(android.graphics.Typeface face, String s, float sp, int color, int weight) {
+        TextView t = new TextView(this);
+        t.setTypeface(face);
+        if (face != android.graphics.Typeface.MONOSPACE) t.setFontVariationSettings("'wght' " + weight);
+        t.setTextSize(sp);
+        t.setTextColor(color);
+        t.setText(s);
+        t.setPadding(0, 0, 0, Math.round(10 * density));
+        return t;
+    }
+
+    /** Opens YouTube's search for the match's highlights. */
+    private void searchHighlights(String query) {
+        Intent search = new Intent(Intent.ACTION_SEARCH).setPackage("com.google.android.youtube.tv")
+                .putExtra(android.app.SearchManager.QUERY, query).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(search);
+            return;
+        } catch (ActivityNotFoundException ignored) {
+        }
+        open(new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query))));
+    }
+
+    /** In the last 30 seconds before a prayer time, its cell blinks and glows; at the time it settles. */
+    private final Runnable blinkStart = this::armBlink;
+
+    private void armBlink() {
+        handler.removeCallbacks(blinkStart);
+        long at = PrayerAlarm.next(this, prayerZone);
+        if (at <= 0) return;
+        long left = at - System.currentTimeMillis();
+        if (left > 30_000) {
+            handler.postDelayed(blinkStart, left - 30_000);
+            return;
+        }
+        java.util.Calendar when = java.util.Calendar.getInstance();
+        when.setTimeInMillis(at);
+        int minute = when.get(java.util.Calendar.HOUR_OF_DAY) * 60 + when.get(java.util.Calendar.MINUTE);
+        PrayerTimes.Day day = PrayerTimes.find(this, prayerZone, when);
+        int cell = -1;
+        for (int i = 0; day != null && i < day.minutes.length; i++) if (day.minutes[i] == minute) cell = i;
+        if (cell < 0 || blinking == cell) return;
+        startBlink(cell, left);
+    }
+
+    private void startBlink(int cell, long ms) {
+        stopBlink();
+        blinking = cell;
+        final TextView time = prayerClocks[cell], name = prayerLabels[cell];
+        blink = android.animation.ValueAnimator.ofFloat(0f, 1f);
+        blink.setDuration(1000);
+        blink.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+        blink.addUpdateListener(a -> {
+            float w = (float) (0.5 - 0.5 * Math.cos((float) a.getAnimatedValue() * 2 * Math.PI));
+            time.setAlpha(0.45f + 0.55f * w);
+            name.setAlpha(0.45f + 0.55f * w);
+            time.setShadowLayer(2 * density + 16 * density * w, 0, 0, android.graphics.Color.argb(Math.round(220 * w), 255, 196, 107));
+        });
+        blink.start();
+        handler.postDelayed(blinkEnd, Math.max(0, ms) + 300);
+    }
+
+    /** The time has come: a last warm glow that fades, then the row moves on to the next prayer. */
+    private final Runnable blinkEnd = () -> {
+        int cell = blinking;
+        stopBlink();
+        if (cell < 0) return;
+        final TextView time = prayerClocks[cell];
+        android.animation.ValueAnimator glow = android.animation.ValueAnimator.ofFloat(1f, 0f);
+        glow.setDuration(8000);
+        glow.addUpdateListener(a -> {
+            float w = (float) a.getAnimatedValue();
+            time.setShadowLayer(2 * density + 20 * density * w, 0, 0, android.graphics.Color.argb(Math.round(230 * w), 255, 196, 107));
+        });
+        glow.start();
+        updatePrayerTimes();
+    };
+
+    private void stopBlink() {
+        handler.removeCallbacks(blinkEnd);
+        if (blink != null) blink.cancel();
+        blink = null;
+        if (blinking >= 0) {
+            prayerClocks[blinking].setAlpha(1f);
+            prayerLabels[blinking].setAlpha(1f);
+            prayerClocks[blinking].setShadowLayer(5 * density, 0, 0, 0xB3000000);
+        }
+        blinking = -1;
+    }
+
+    /** As each hour begins the clock glows warm for a few seconds, then settles. */
+    private final Runnable hourGlowTick = () -> {
+        playHourGlow();
+        scheduleHourGlow();
+    };
+
+    private void scheduleHourGlow() {
+        handler.removeCallbacks(hourGlowTick);
+        if (!hourGlow) return;
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        // Coming back within the hour's first minute still gets it.
+        if (c.get(java.util.Calendar.MINUTE) == 0 && c.get(java.util.Calendar.SECOND) < 50) playHourGlow();
+        long ms = ((59 - c.get(java.util.Calendar.MINUTE)) * 60L + (60 - c.get(java.util.Calendar.SECOND))) * 1000L
+                - c.get(java.util.Calendar.MILLISECOND) + 300;
+        handler.postDelayed(hourGlowTick, ms);
+    }
+
+    private android.animation.ValueAnimator hourAnim;
+
+    private void playHourGlow() {
+        TextView clock = findViewById(R.id.clock);
+        if (clock == null) return;
+        if (hourAnim != null) hourAnim.cancel();
+        hourAnim = android.animation.ValueAnimator.ofFloat(0f, 1f);
+        hourAnim.setDuration(6000);
+        hourAnim.addUpdateListener(a -> {
+            float t = (float) a.getAnimatedValue();
+            // Three soft swells that fade out.
+            float swell = (float) (0.5 - 0.5 * Math.cos(t * 3 * 2 * Math.PI)) * (1f - t * 0.6f);
+            clock.setShadowLayer(4 * density + 22 * density * swell, 0, 0,
+                    android.graphics.Color.argb(Math.round(230 * swell), 255, 196, 107));
+            float s = 1f + 0.035f * swell;
+            clock.setPivotX(0);
+            clock.setPivotY(clock.getHeight() * 0.8f);
+            clock.setScaleX(s);
+            clock.setScaleY(s);
+        });
+        hourAnim.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                clock.setShadowLayer(0, 0, 0, 0);
+                clock.setScaleX(1f);
+                clock.setScaleY(1f);
+            }
+        });
+        hourAnim.start();
+    }
+
+    /** Greys out every tile on screen but the selected one; null brings them all back. */
+    private void muteOthers(View selected) {
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            RecyclerView.ViewHolder vh = grid.getChildViewHolder(grid.getChildAt(i));
+            if (vh instanceof AppAdapter.Holder) {
+                AppAdapter.Holder h = (AppAdapter.Holder) vh;
+                h.setMuted(selected != null && h.card != selected);
+            }
+        }
+    }
+
+    /** Today's times with the next one lit, fetching the year from JAKIM in the background when missing. */
+    private void updatePrayerTimes() {
+        if (prayerZone.isEmpty()) return;
+        java.util.Calendar now = java.util.Calendar.getInstance();
+        PrayerTimes.Day day = PrayerTimes.find(this, prayerZone, now);
+        if (day == null) {
+            prayerRow.setVisibility(View.GONE);
+            if (!prayerRefreshRunning && PrayerTimes.due(this, prayerZone)) {
+                prayerRefreshRunning = true;
+                final String zone = prayerZone;
+                new Thread(() -> {
+                    boolean stored = PrayerTimes.refresh(getApplicationContext(), zone);
+                    handler.post(() -> {
+                        prayerRefreshRunning = false;
+                        if (stored && !isDestroyed()) updatePrayerTimes();
+                    });
+                }, "prayer-times").start();
+            }
+            return;
+        }
+        boolean is24 = android.text.format.DateFormat.is24HourFormat(this);
+        int minute = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE);
+        int next = PrayerTimes.next(day, minute);
+        for (int i = 0; i < prayerClocks.length; i++) {
+            boolean lit = i == next;
+            prayerClocks[i].setText(PrayerTimes.format(day.minutes[i], is24));
+            // Brighter than before, so the times stay readable on a white or bright picture.
+            prayerClocks[i].setTextColor(lit ? 0xFFFFFFFF : 0xE6FFFFFF);
+            prayerLabels[i].setTextColor(lit ? 0xFFFFC46B : 0xD9FFFFFF);
+        }
+        if (!prayerRow.hasFocus() && blinking < 0) shadePrayerText();
+        String hijri = PrayerTimes.hijri(day.hijri);
+        String countdown;
+        if (next >= 0) {
+            countdown = getString(R.string.prayer_in, PrayerTimes.NAMES[next], PrayerTimes.until(this, day.minutes[next] - minute));
+        } else {
+            // After Isyak: tomorrow's Subuh, when the stored year has tomorrow.
+            java.util.Calendar tomorrow = (java.util.Calendar) now.clone();
+            tomorrow.add(java.util.Calendar.DAY_OF_MONTH, 1);
+            PrayerTimes.Day t = PrayerTimes.find(this, prayerZone, tomorrow);
+            countdown = t == null ? "" : getString(R.string.prayer_tomorrow, PrayerTimes.format(t.minutes[0], is24));
+        }
+        prayerInfo.setText(hijri.isEmpty() ? countdown : countdown.isEmpty() ? hijri : hijri + "\n" + countdown);
+        // Hidden from Home, the times still count down and the azan still sounds.
+        boolean shown = HomeWidgets.shown(this, HomeWidgets.PRAYER);
+        if (!shown && prayerRow.hasFocus()) focusTile(lastFocused % COLUMNS);
+        prayerRow.setVisibility(shown ? View.VISIBLE : View.GONE);
+        if (shown) fitPrayerRow();
+        if (prayerAlert) {
+            PrayerAlarm.schedule(this, prayerZone);
+            armBlink();
+        }
     }
 
     /** Shows the Wi-Fi network name on the button when we can read it, otherwise the connection type. */

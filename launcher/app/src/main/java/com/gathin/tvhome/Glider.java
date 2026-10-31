@@ -283,7 +283,16 @@ final class Glider extends View {
         float r = Math.min(edges[RADIUS], Math.min(b - t, edges[RIGHT] - edges[LEFT]) / 2f);
         shape.set(edges[LEFT] + dx, t + dy, edges[RIGHT] + dx, b + dy);
         if (style == DARK) {
-            paint.setColor((int) (FOCUS_ALPHA * opacity) << 24);
+            // The top bar and menus: a bright pill with a warm halo, so the choice shows on any picture.
+            if (halo == null) {
+                halo = new Paint(Paint.ANTI_ALIAS_FLAG);
+                halo.setMaskFilter(new android.graphics.BlurMaskFilter(shadowBlur * 0.7f, android.graphics.BlurMaskFilter.Blur.NORMAL));
+            }
+            halo.setColor(0xFFFFC46B);
+            halo.setAlpha(Math.round(0xB0 * opacity));
+            canvas.drawRoundRect(shape, r, r, halo);
+            paint.setColor(0xFFFFFFFF);
+            paint.setAlpha(Math.round(0xF0 * opacity));
             canvas.drawRoundRect(shape, r, r, paint);
             return;
         }
@@ -301,6 +310,53 @@ final class Glider extends View {
         canvas.drawRoundRect(shape, r - half, r - half, rim.paint);
     }
 
+    private Paint halo;
+
+    /** The selected app's colour, glowing softly round it under the glass; 0 for none (tile_glow). */
+    private int glowColor;
+
+    void setGlowColor(int color) {
+        if (color == glowColor) return;
+        glowColor = color;
+        breathe(color != 0);
+        changed();
+    }
+
+    /** The glow breathes slowly while an app is selected: 0 to 1 and back, every 5 seconds. */
+    private float breath = 1f;
+    private ValueAnimator breathing;
+
+    private void breathe(boolean on) {
+        if (on == (breathing != null)) return;
+        if (!on) {
+            breathing.cancel();
+            breathing = null;
+            breath = 1f;
+            return;
+        }
+        breathing = ValueAnimator.ofFloat(0f, 1f);
+        breathing.setDuration(5000);
+        breathing.setRepeatCount(ValueAnimator.INFINITE);
+        breathing.setInterpolator(null);
+        breathing.addUpdateListener(a -> {
+            breath = (float) (0.5 - 0.5 * Math.cos((float) a.getAnimatedValue() * 2 * Math.PI));
+            if (style == GLASS && isShowing()) changed();
+        });
+        breathing.start();
+    }
+
+    /** The shadow's blurred shape again, tinted and a little larger, with no drop: a glow all round. */
+    private void drawGlow(Canvas canvas, int pad) {
+        if (glowColor == 0 || shadow == null) return;
+        // The blurred shape stretched a little past the card, so its soft edge shows all round; the
+        // dock tray lets it spill over its own edge (DockDecoration).
+        float reach = pad * (0.52f + 0.12f * breath);
+        shadowPaint.setColor(0xFF000000 | glowColor);
+        shadowPaint.setAlpha(Math.round((0x90 + 0x50 * breath) * opacity * shadowMix));
+        area.set(shape.left - reach, shape.top - reach, shape.right + reach, shape.bottom + reach);
+        canvas.drawBitmap(shadow, null, area, shadowPaint);
+    }
+
     private void drawShadow(Canvas canvas, float radius) {
         if (shadowMix <= 0f) return;
         int w = Math.round(shape.width()), h = Math.round(shape.height());
@@ -313,6 +369,7 @@ final class Glider extends View {
             shadowPaint.setAlpha(Math.round(0x9A * opacity * shadowMix));
             area.set(shape.left - pad, shape.top - pad + shadowDrop, shape.right + pad, shape.bottom + pad + shadowDrop);
             canvas.drawBitmap(shadow, null, area, shadowPaint);
+            drawGlow(canvas, pad);
             return;
         }
         if (shadow == null || w != shadowW || h != shadowH) {
@@ -327,6 +384,7 @@ final class Glider extends View {
         shadowPaint.setColor(0xFF000000);
         shadowPaint.setAlpha(Math.round(0x9A * opacity * shadowMix));
         canvas.drawBitmap(shadow, shape.left - pad, shape.top - pad + shadowDrop, shadowPaint);
+        drawGlow(canvas, pad);
     }
 
     private void fadeTo(float to, long ms) {
@@ -354,7 +412,7 @@ final class Glider extends View {
         if (companions.isEmpty()) return;
         dirty.set(drawn);
         if (isShowing()) {
-            float reach = 2f * shadowBlur + shadowDrop + 2f;
+            float reach = 3f * shadowBlur + shadowDrop + 2f;   // the glow reaches past the shadow
             drawn.set(edges[LEFT] - reach, edges[TOP] + yShift - reach,
                     edges[RIGHT] + reach, edges[BOTTOM] + yShift + reach);
             dirty.union(drawn);

@@ -83,7 +83,9 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
             parent.getLocationInWindow(at);
             glider.getLocationInWindow(gliderAt);
             c.save();
-            c.clipRect(rect);
+            // A little past the tray, so a dock app's glow is not cut off at the tray's edge.
+            float spill = 26 * density;
+            c.clipRect(rect.left - spill, rect.top - spill, rect.right + spill, rect.bottom + spill);
             glider.drawShape(c, gliderAt[0] - at[0], gliderAt[1] - at[1], parent);
             c.restore();
         }

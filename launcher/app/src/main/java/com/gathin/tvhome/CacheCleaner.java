@@ -32,7 +32,7 @@ import java.security.spec.RSAKeyGenParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
 
 /**
- * Empties the TV's app caches every few weeks, from the TV itself. The Play Store leaves gigabytes of
+ * Empties the TV's app caches every day (and on demand from the Clear cache tile in All apps), from the TV itself. The Play Store leaves gigabytes of
  * download fragments behind; on a TV with 11 GB that filled storage until YouTube opened to a blank
  * screen. Android lets no installed app clear other apps' caches, so this asks the TV's own debugging
  * service, the one the setup used over Wi-Fi, to run {@code pm trim-caches}. The first time, the TV
@@ -45,11 +45,13 @@ import java.security.spec.X509EncodedKeySpec;
  */
 final class CacheCleaner {
     private static final String TAG = "TvHome.Clean";
-    static final int DEFAULT_DAYS = 15;
+    static final int DEFAULT_DAYS = 1;
     /** How long Home must sit on screen before it cleans, so it never runs while someone is busy. */
     static final long IDLE_MS = 20_000;
-    /** The one command this ever sends. */
+    /** The one command the daily clean sends. */
     private static final String COMMAND = "shell:pm trim-caches 999999999999";
+    /** The Clear cache tile also stops apps left running in the background, to free the TV's memory. */
+    private static final String NOW_COMMAND = "shell:pm trim-caches 999999999999; am kill-all";
     private static final long DAY_MS = 24L * 60 * 60 * 1000;
     /** Storage this full cleans early: apps start failing well before Android itself steps in. */
     private static final int FULL_PERCENT = 80;
@@ -100,6 +102,42 @@ final class CacheCleaner {
             } finally {
                 running = false;
             }
+        }, "cache-clean").start();
+    }
+
+    /**
+     * The Clear cache tile: cleans at once, whatever the schedule, and tells {@code done} (on a
+     * background thread) what happened, in words for a toast.
+     */
+    static void runNow(Context ctx, java.util.function.Consumer<String> done) {
+        final Context app = ctx.getApplicationContext();
+        final Context words = Lang.wrap(app);
+        if (running) {
+            done.accept(words.getString(R.string.clean_busy));
+            return;
+        }
+        running = true;
+        new Thread(() -> {
+            String said;
+            try {
+                int before = usedPercent();
+                if (shell(app, true, NOW_COMMAND) || shell(app, false, NOW_COMMAND)) {
+                    long now = System.currentTimeMillis();
+                    prefs(app).edit().putLong("cleaned", now).putLong("seen", now).putLong("tried", now)
+                            .putInt("declined", 0).apply();
+                    said = words.getString(R.string.clean_done, before, usedPercent());
+                } else {
+                    said = words.getString(R.string.clean_denied);
+                }
+            } catch (IOException e) {
+                said = words.getString(R.string.clean_no_debug);
+            } catch (Exception e) {
+                Log.w(TAG, "clean now failed: " + e);
+                said = words.getString(R.string.clean_failed);
+            } finally {
+                running = false;
+            }
+            done.accept(said);
         }, "cache-clean").start();
     }
 

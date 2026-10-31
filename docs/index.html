@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glass TV Enhanced</title>
+<meta name="description" content="A free, open-source home screen for Android TV: frosted glass, no ads, weather, prayer times, Wisdom and Premier League widgets, a wallpaper studio with live preview and filters, in English, Bahasa Melayu or 中文.">
+<meta property="og:title" content="Glass TV Enhanced">
+<meta property="og:description" content="Your Android TV. Fast, ad-free and truly yours. Free and open source.">
+<meta property="og:image" content="https://aizverus.github.io/glass-tv-enhanced/screenshots/enhanced/home.jpg">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #070a14; --bg2: #121a30; --ink: #f4f6fb; --dim: #aab3cc; --gold: #ffc46b; --glass: rgba(255,255,255,.06);
+    --line: rgba(255,255,255,.12); --radius: 18px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: radial-gradient(1200px 700px at 50% -10%, #23345e 0%, var(--bg) 60%) fixed, var(--bg);
+         color: var(--ink); font-family: Outfit, system-ui, sans-serif; font-weight: 300; line-height: 1.55; }
+  a { color: var(--gold); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+  header.top { display: flex; justify-content: space-between; align-items: center; padding: 22px 0; }
+  .brand { font-weight: 500; letter-spacing: .02em; }
+  .brand span { color: var(--gold); }
+  nav a { color: var(--dim); margin-left: 22px; font-size: 15px; }
+  .hero { text-align: center; padding: 48px 0 28px; }
+  .hero h1 { font-size: clamp(40px, 7vw, 76px); font-weight: 300; margin: 0; letter-spacing: -.02em; }
+  .hero p.lead { font-size: clamp(18px, 2.4vw, 24px); color: #ffd9a3; margin: 10px 0 28px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn { padding: 12px 22px; border-radius: 999px; border: 1px solid var(--line); background: var(--glass);
+         color: var(--ink); font-weight: 500; backdrop-filter: blur(8px); }
+  .btn.primary { background: var(--gold); color: #1a1408; border-color: var(--gold); }
+  .btn:hover { text-decoration: none; filter: brightness(1.08); }
+  .video { margin: 36px auto 0; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line);
+           box-shadow: 0 30px 80px rgba(0,0,0,.55); background: #000; }
+  .video video { display: block; width: 100%; height: auto; }
+  section { padding: 56px 0 8px; }
+  h2 { font-size: clamp(26px, 3.6vw, 38px); font-weight: 400; margin: 0 0 8px; }
+  .sub { color: var(--dim); margin: 0 0 26px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+  .card { background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .card img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; }
+  .card .body { padding: 16px 18px 20px; }
+  .card h3 { margin: 0 0 6px; font-weight: 500; font-size: 19px; }
+  .card p { margin: 0; color: var(--dim); font-size: 15.5px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip { padding: 8px 14px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line); font-size: 15px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15.5px; }
+  th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--gold); font-weight: 500; }
+  kbd { font-family: inherit; font-weight: 500; padding: 1px 7px; border-radius: 6px; border: 1px solid var(--line); background: rgba(255,255,255,.08); }
+  .tablewrap { overflow-x: auto; background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius); }
+  ol.steps { padding-left: 22px; color: var(--dim); }
+  ol.steps li { margin: 8px 0; }
+  ol.steps b { color: var(--ink); font-weight: 500; }
+  pre { background: #05070d; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; overflow-x: auto; font-size: 14px; color: #dfe6ff; }
+  .poster { display: grid; grid-template-columns: minmax(0, 360px) 1fr; gap: 28px; align-items: center; }
+  .poster img { width: 100%; border-radius: var(--radius); border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  footer { padding: 56px 0 40px; color: var(--dim); font-size: 14px; text-align: center; }
+  @media (max-width: 720px) {
+    nav { display: none; }
+    .poster { grid-template-columns: 1fr; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">Glass TV <span>Enhanced</span></div>
+    <nav><a href="#features">Features</a><a href="#remote">Remote</a><a href="#setup">Set up</a>
+      <a href="https://github.com/aizverus/glass-tv-enhanced">GitHub</a></nav>
+  </header>
+
+  <div class="hero">
+    <h1>Glass TV Enhanced</h1>
+    <p class="lead">Your Android TV. Fast, ad-free and truly yours.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/aizverus/glass-tv-enhanced">Get it on GitHub</a>
+      <a class="btn" href="https://github.com/aizverus/glass-tv-enhanced/blob/main/docs/ENHANCED-GUIDE.md">Read the guide</a>
+    </div>
+    <div class="video">
+      <video controls playsinline preload="metadata" poster="media/ad-poster-frame.jpg">
+        <source src="media/glass-tv-enhanced-ad.mp4" type="video/mp4">
+      </video>
+    </div>
+  </div>
+
+  <section id="features">
+    <h2>A calm home screen that does more</h2>
+    <p class="sub">Free and open source. No ads, no bloat, nothing to sign up for. Everything works from an ordinary remote.</p>
+    <div class="grid">
+      <div class="card"><img src="screenshots/enhanced/home.jpg" alt="Home with clock, weather, prayer times, a Quran verse and football scores" loading="lazy">
+        <div class="body"><h3>Everything at a glance</h3><p>Clock, weather, prayer times, Wisdom and Premier League widgets above a frosted-glass dock.</p></div></div>
+      <div class="card"><img src="screenshots/enhanced/weather-page.jpg" alt="The weather page with a seven-day forecast" loading="lazy">
+        <div class="body"><h3>Weather for any town</h3><p>Now and the days ahead from Open-Meteo, with rain, wind, UV, sunrise and sunset. No key needed.</p></div></div>
+      <div class="card"><img src="screenshots/enhanced/prayer-page.jpg" alt="Prayer times for the week" loading="lazy">
+        <div class="body"><h3>Prayer times &amp; azan</h3><p>JAKIM e-Solat times with a countdown, an azan or chime at each prayer, and the whole week or month.</p></div></div>
+      <div class="card"><img src="screenshots/enhanced/wisdom-page.jpg" alt="The Wisdom page" loading="lazy">
+        <div class="body"><h3>Wisdom, every day</h3><p>Quran verses, hadith and quotes. Add your own, download more, pin one, or let them change every few minutes.</p></div></div>
+      <div class="card"><img src="screenshots/enhanced/epl-table.jpg" alt="Premier League table and highlights" loading="lazy">
+        <div class="body"><h3>Premier League live</h3><p>Your teams' scores with the winner in bold, the table, and highlights one click away on YouTube.</p></div></div>
+      <div class="card"><img src="screenshots/enhanced/filter-sepia.jpg" alt="A wallpaper previewed on Home with the Sepia filter" loading="lazy">
+        <div class="body"><h3>Wallpaper studio</h3><p>Try a picture on the real Home before choosing it. Ten filters at any strength. Send photos from your phone.</p></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Only what you want</h2>
+    <p class="sub">Hold OK on any widget and choose <em>Hide from Home</em>. Each one has its own tile in All apps to bring it back.</p>
+    <div class="chips">
+      <span class="chip">Weather</span><span class="chip">Prayer times</span><span class="chip">Wisdom</span>
+      <span class="chip">Premier League</span><span class="chip">English · Bahasa Melayu · 中文</span>
+      <span class="chip">Daily cache clean</span><span class="chip">Edge glow &amp; vignette</span><span class="chip">Clock screensaver</span>
+    </div>
+  </section>
+
+  <section id="remote">
+    <h2>The remote, in one table</h2>
+    <p class="sub">No mouse, no phone app, no menus to dig through.</p>
+    <div class="tablewrap"><table>
+      <tr><th>Where</th><th>Press</th><th>What happens</th></tr>
+      <tr><td>Any widget</td><td><kbd>OK</kbd></td><td>Opens it: the weather page, the league table, other words, the azan sound</td></tr>
+      <tr><td>Any widget</td><td>Hold <kbd>OK</kbd></td><td>Its menu, including <em>Hide from Home</em></td></tr>
+      <tr><td>Wallpaper preview</td><td><kbd>◀</kbd> <kbd>▶</kbd> · <kbd>OK</kbd> · <kbd>▲</kbd> · <kbd>▼</kbd></td><td>Next picture · use it · delete it · filters</td></tr>
+      <tr><td>Filters</td><td><kbd>◀</kbd> <kbd>▶</kbd> · <kbd>▲</kbd> <kbd>▼</kbd></td><td>Next filter · stronger or fainter</td></tr>
+      <tr><td>All apps</td><td><kbd>Language</kbd> tile</td><td>English, Bahasa Melayu, 中文, or follow the TV</td></tr>
+    </table></div>
+  </section>
+
+  <section id="setup">
+    <div class="poster">
+      <img src="media/poster.png" alt="Glass TV Enhanced poster" loading="lazy">
+      <div>
+        <h2>Set it up in an evening</h2>
+        <p class="sub">Glass TV Enhanced installs over Wi-Fi, needs no root, and nothing it does can't be undone.</p>
+        <ol class="steps">
+          <li><b>Turn on network debugging</b> on your Android TV or Google TV (Developer options).</li>
+          <li><b>Clone the repository</b> and point your AI coding agent at <code>AGENTS.md</code>, or follow the steps by hand.</li>
+          <li><b>Debloat and install</b>, then press Home and choose Glass TV.</li>
+        </ol>
+<pre>git clone https://github.com/aizverus/glass-tv-enhanced
+cd glass-tv-enhanced
+python3 -m venv tools/venv &amp;&amp; tools/venv/bin/pip install -r tools/requirements.txt
+export TV_HOST=192.168.1.50      # your TV's IP address
+launcher/build-and-install.sh</pre>
+        <p class="sub">Full steps: <a href="https://github.com/aizverus/glass-tv-enhanced/blob/main/docs/CLEANYOURTV-README.md">setup guide</a> ·
+          <a href="https://github.com/aizverus/glass-tv-enhanced/blob/main/docs/ENHANCED-GUIDE.md">features guide</a></p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Glass TV Enhanced is a fork of <a href="https://github.com/cocombee/glass-tv">Glass TV</a> by Gathin, MIT licence.<br>
+    Weather: Open-Meteo · Prayer times: JAKIM e-Solat · Quran: AlQuran.cloud · Quotes: ZenQuotes · Football: Fantasy Premier League &amp; ESPN.
+  </footer>
+</div>
+</body>
+</html>

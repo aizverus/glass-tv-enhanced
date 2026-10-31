@@ -62,6 +62,19 @@
     <!-- Grid rows left visible under the dock on the home screen. 0 = dock sits at the very bottom. -->
     <integer name="rows_below_dock">0</integer>
 
+    <!-- JAKIM e-Solat zone for the prayer times row under the clock (www.e-solat.gov.my), e.g. KDH05 for Kulim
+         and Bandar Baharu. Empty: no prayer times, and nothing is fetched for them. -->
+    <string name="prayer_zone" translatable="false"></string>
+    <!-- Short Quran verses and hadith (Arabic, source, Malay meaning) on the shelf above the dock instead of
+         the picture's name and story. -->
+    <bool name="hero_quotes">false</bool>
+    <!-- Tile size as a percentage of the room in its cell, 60 to 100; smaller tiles leave wider gaps. -->
+    <integer name="tile_size_percent">100</integer>
+    <!-- The selected app glows softly round its tile in its own colour. -->
+    <bool name="tile_glow">false</bool>
+    <!-- The dock apps beside the selected one rise a little too, like the macOS Dock. -->
+    <bool name="dock_magnify">false</bool>
+
     <!-- Tiles per row in the grid; the dock always has this many slots. Tiles are 180dp wide at 4 columns and
          shrink to fit from 5 up (about 144dp at 5, 117dp at 6 on a 1080p TV). -->
     <integer name="columns">4</integer>

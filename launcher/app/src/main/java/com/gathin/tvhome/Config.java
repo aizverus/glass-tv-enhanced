@@ -64,6 +64,34 @@ final class Config {
     final boolean places;
     /** Days between clearing the TV's app caches (see CacheCleaner); 0 never does. */
     final int cacheCleanDays;
+    /** JAKIM e-Solat zone for the prayer times under the clock, e.g. KDH05; empty shows none (see PrayerTimes). */
+    final String prayerZone;
+    /** Quran verses and hadith on the shelf instead of the picture's name (see Quotes). */
+    final boolean heroQuotes;
+    /** Tile size as a percentage of the room in its cell (60 to 100). */
+    final int tileSizePercent;
+    /** The selected app glows softly in its own colour. */
+    final boolean tileGlow;
+    /** The dock apps beside the selected one rise a little too, like the macOS Dock. */
+    final boolean dockMagnify;
+    /** Most tiles on Home before "More" (max_tiles); 0 shows every app. */
+    final int maxTiles;
+    /** ESPN abbreviations of the Premier League teams on the score card; empty hides it. */
+    final List<String> eplTeams;
+    /** The clock glows for a few seconds as each hour begins. */
+    final boolean hourGlow;
+    /** The screen's edges glow while the microphone listens. */
+    final boolean voiceGlow;
+    /** A chime as each prayer time comes in, and the next time blinking in its last 30 seconds. */
+    final boolean prayerAlert;
+    /** Glass tiles: shine, rim and livelier colour (AppAdapter.SHEEN). */
+    final boolean tileSheen;
+    /** A soft low tick as the selection moves from app to app. */
+    final boolean hoverSound;
+    /** The selected app's colour glows from the screen's corners, turning slowly, instead of filling the room. */
+    final boolean cornerGlow;
+    /** The selected app's logo on glass (glass_icon) and its slow breathing zoom (tile_pulse). */
+    final boolean glassIcon, tilePulse;
     /** Whether the overlay file was present and parsed. */
     final boolean overlayApplied;
 
@@ -74,7 +102,10 @@ final class Config {
                    boolean showHomeSettingsShortcut, boolean showNetworkPill, boolean showLiveTv,
                    int backgroundColor,
                    File wallpaper, List<File> wallpapers, long wallpaperIntervalMs,
-                   boolean places, int cacheCleanDays, boolean overlayApplied) {
+                   boolean places, int cacheCleanDays, String prayerZone, boolean heroQuotes, int tileSizePercent, boolean tileGlow,
+                   boolean dockMagnify, int maxTiles, List<String> eplTeams, boolean hourGlow,
+                   boolean voiceGlow, boolean prayerAlert, boolean tileSheen, boolean hoverSound,
+                   boolean cornerGlow, boolean glassIcon, boolean tilePulse, boolean overlayApplied) {
         this.dockApps = Collections.unmodifiableList(dockApps);
         this.hiddenApps = Collections.unmodifiableList(hiddenApps);
         this.liveTvPackage = liveTvPackage;
@@ -97,12 +128,38 @@ final class Config {
         this.wallpaperIntervalMs = wallpaperIntervalMs;
         this.places = places;
         this.cacheCleanDays = cacheCleanDays;
+        this.prayerZone = prayerZone;
+        this.heroQuotes = heroQuotes;
+        this.tileSizePercent = tileSizePercent;
+        this.tileGlow = tileGlow;
+        this.dockMagnify = dockMagnify;
+        this.maxTiles = maxTiles;
+        this.eplTeams = Collections.unmodifiableList(eplTeams);
+        this.hourGlow = hourGlow;
+        this.voiceGlow = voiceGlow;
+        this.prayerAlert = prayerAlert;
+        this.tileSheen = tileSheen;
+        this.hoverSound = hoverSound;
+        this.cornerGlow = cornerGlow;
+        this.glassIcon = glassIcon;
+        this.tilePulse = tilePulse;
         this.overlayApplied = overlayApplied;
     }
 
     /** The folder the theme tools push into; null when external storage is unavailable. */
     static File dir(Context ctx) {
         return ctx.getExternalFilesDir(null);
+    }
+
+    /**
+     * Whether the theme folder can be read yet. Just after the TV starts, Home comes up before shared
+     * storage is mounted (the path even reads /dev/null/...), so the theme and pictures are not there.
+     */
+    static boolean ready(Context ctx) {
+        File d = dir(ctx);
+        return d != null && !d.getPath().startsWith("/dev/null")
+                && android.os.Environment.MEDIA_MOUNTED.equals(android.os.Environment.getExternalStorageState(d))
+                && d.isDirectory();
     }
 
     static Config load(Context ctx) {
@@ -123,12 +180,29 @@ final class Config {
         boolean homeSettings = res.getBoolean(R.bool.show_home_settings_shortcut);
         boolean networkPill = res.getBoolean(R.bool.show_network_pill);
         boolean liveTvRow = res.getBoolean(R.bool.show_live_tv);
+        String prayerZone = res.getString(R.string.prayer_zone).trim();
+        boolean heroQuotes = res.getBoolean(R.bool.hero_quotes);
+        int tileSize = res.getInteger(R.integer.tile_size_percent);
+        boolean tileGlow = res.getBoolean(R.bool.tile_glow);
+        boolean dockMagnify = res.getBoolean(R.bool.dock_magnify);
+        int maxTiles = 0;
+        List<String> eplTeams = new ArrayList<>();
+        boolean hourGlow = false, voiceGlow = false, prayerAlert = false, tileSheen = false,
+                hoverSound = false, cornerGlow = false, glassIcon = false, tilePulse = false;
         int background = 0xFF000000;
         boolean applied = false;
 
-        File dir = dir(ctx);
+        File dir = ready(ctx) ? dir(ctx) : null;
         File file = dir != null ? new File(dir, FILE_NAME) : null;
         JSONObject json = read(file);
+        // A copy kept in internal storage, read when shared storage is not up yet (just after the TV
+        // starts), so Home has its theme from the first frame.
+        File cached = new File(ctx.getFilesDir(), FILE_NAME);
+        if (json != null) {
+            copy(file, cached);
+        } else {
+            json = read(cached);
+        }
         if (json != null) {
             applied = true;
             dock = stringList(json, "dock_apps", dock);
@@ -148,6 +222,21 @@ final class Config {
             networkPill = bool(json, "show_network_pill", networkPill);
             liveTvRow = bool(json, "show_live_tv", liveTvRow);
             background = color(json, "background_color", background);
+            prayerZone = string(json, "prayer_zone", prayerZone);
+            heroQuotes = bool(json, "hero_quotes", heroQuotes);
+            tileSize = integer(json, "tile_size_percent", tileSize, 60, 100);
+            tileGlow = bool(json, "tile_glow", tileGlow);
+            dockMagnify = bool(json, "dock_magnify", dockMagnify);
+            maxTiles = integer(json, "max_tiles", maxTiles, 0, 64);
+            eplTeams = stringList(json, "epl_teams", eplTeams);
+            hourGlow = bool(json, "hour_glow", hourGlow);
+            voiceGlow = bool(json, "voice_glow", voiceGlow);
+            prayerAlert = bool(json, "prayer_alert", prayerAlert);
+            tileSheen = bool(json, "tile_sheen", tileSheen);
+            hoverSound = bool(json, "hover_sound", hoverSound);
+            cornerGlow = bool(json, "corner_glow", cornerGlow);
+            glassIcon = bool(json, "glass_icon", glassIcon);
+            tilePulse = bool(json, "tile_pulse", tilePulse);
         }
         File wallpaper = dir != null ? new File(dir, WALLPAPER_NAME) : null;
         if (wallpaper != null && !(wallpaper.isFile() && wallpaper.length() > 0)) wallpaper = null;
@@ -174,7 +263,19 @@ final class Config {
         return new Config(dock, hidden, liveTv, liveTvAction, panelService, panelAction, inputAction,
                 Math.max(1, columns), Math.max(0, rowsBelow), shamsi, moduleCards, reducedMotion,
                 vpn, homeSettings, networkPill, liveTvRow, background, wallpaper, wallpapers, wallpaperIntervalMs,
-                places, cacheCleanDays, applied);
+                places, cacheCleanDays, prayerZone.toUpperCase(java.util.Locale.ROOT), heroQuotes, tileSize, tileGlow, dockMagnify, maxTiles, eplTeams,
+                hourGlow, voiceGlow, prayerAlert, tileSheen, hoverSound, cornerGlow, glassIcon, tilePulse, applied);
+    }
+
+    private static void copy(File from, File to) {
+        if (from.length() == to.length() && from.lastModified() <= to.lastModified()) return;
+        try (InputStream in = new FileInputStream(from);
+             java.io.OutputStream out = new java.io.FileOutputStream(to)) {
+            byte[] buf = new byte[8192];
+            for (int r; (r = in.read(buf)) > 0; ) out.write(buf, 0, r);
+        } catch (Exception e) {
+            Log.w(TAG, "could not keep a copy of " + from + ": " + e);
+        }
     }
 
     /** Reads and parses the overlay; any problem means "no overlay", never a crash on the home screen. */

@@ -8,6 +8,12 @@
 
     <!-- Only for the weekly pictures of places (PlaceWallpapers); "places": false keeps the launcher offline. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The voice glow round the screen (VoiceGlow), over the voice search screen. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Photos a phone sends with LocalSend land in Download/ (WallpaperImport). -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- Uninstall from the hold-OK menu and All apps (Android asks to confirm). -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Needed on Android 10 to read the Wi-Fi network name; granted over adb at install time. -->
@@ -38,6 +44,7 @@
         android:banner="@drawable/banner"
         android:theme="@style/Theme.TvHome"
         android:allowBackup="false"
+        android:requestLegacyExternalStorage="true"
         android:localeConfig="@xml/locales_config">
 
         <activity
@@ -61,6 +68,35 @@
             </intent-filter>
         </activity>
 
+        <receiver
+            android:name=".PrayerAlarm"
+            android:exported="false" />
+        <activity
+            android:name=".AllAppsActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape" />
+        <activity
+            android:name=".WeatherActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape" />
+        <activity
+            android:name=".PrayerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape" />
+        <activity
+            android:name=".QuotesActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape" />
+        <activity
+            android:name=".WallpaperPickerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.TvHome.Picker"
+            android:screenOrientation="landscape" />
         <activity
             android:name=".HomeSettingsActivity"
             android:exported="false"

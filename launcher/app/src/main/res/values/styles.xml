@@ -10,6 +10,14 @@
         <item name="android:windowDisablePreview">true</item>
     </style>
 
+    <!-- The wallpaper picker: see-through, so Home stays visible behind it and a picture can be
+         tried on Home itself before it is chosen. -->
+    <style name="Theme.TvHome.Picker">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">@android:color/transparent</item>
+    </style>
+
     <!-- Frosted pill, tvOS style. -->
     <style name="TopButtonBase">
         <item name="android:layout_width">wrap_content</item>

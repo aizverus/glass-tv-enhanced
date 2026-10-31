@@ -12,3 +12,15 @@ backup/
 # App banners for the webOS simulator preview only: other companies' logos, kept out of the repository.
 webos/samples/
 *.ipk
+
+# Glass TV Enhanced: this household's own setup stays local (family photos, TV address, tools)
+jdk/
+sdk/
+kulim/
+themes/rumah-kulim/
+home-screen-baru.png
+marketing/scenes/
+marketing/*.wav
+marketing/*.mp4
+marketing/*.png
+marketing/film_inspect.json

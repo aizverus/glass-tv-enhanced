@@ -42,7 +42,7 @@ final class PlaceWallpapers {
      * they describe the picture, where the paragraph under them tells the place's story, and
      * mentions locals or hikers far more often than it shows them. Faces are looked for as well.
      */
-    private static final Pattern PEOPLE = Pattern.compile("\\b(people|persons?|man|men|woman|women|girls?|boys?"
+    static final Pattern PEOPLE = Pattern.compile("\\b(people|persons?|man|men|woman|women|girls?|boys?"
             + "|child|children|kids?|famil(y|ies)|crowds?|festivals?|parades?|carnivals?|danc(er|ers|ing)"
             + "|surf(er|ers|ing)|hik(er|ers|ing)|climb(er|ers)|ski(er|ers)|swimm(er|ers)|fisherm[ae]n|monks?"
             + "|pilgrims?|tourists?|visitors?|weddings?|brides?|processions?|performers?|athletes?|runners?"
@@ -209,7 +209,7 @@ final class PlaceWallpapers {
      * detector, on a half-size copy: no download, no model, and run only when the week's pictures
      * arrive.
      */
-    private static int faces(byte[] jpg) {
+    static int faces(byte[] jpg) {
         BitmapFactory.Options o = new BitmapFactory.Options();
         o.inPreferredConfig = Bitmap.Config.RGB_565;   // what the detector reads
         o.inSampleSize = 2;
@@ -262,7 +262,7 @@ final class PlaceWallpapers {
         d.delete();
     }
 
-    private static byte[] get(String url, int maxBytes) throws Exception {
+    static byte[] get(String url, int maxBytes) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(15000);
         c.setReadTimeout(20000);

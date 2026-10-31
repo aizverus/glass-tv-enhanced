@@ -1,4 +1,45 @@
-# Glass TV
+# Glass TV Enhanced
+
+**Your Android TV. Fast, ad-free and truly yours.** A fork of [Glass TV](https://github.com/cocombee/glass-tv) by
+Gathin that adds widgets, a wallpaper studio and a choice of language, all driven from an ordinary TV remote.
+
+**[Website](https://aizverus.github.io/glass-tv-enhanced/)** ·
+**[Watch the 45-second video](docs/media/glass-tv-enhanced-ad.mp4)** ·
+**[Features and user guide](docs/ENHANCED-GUIDE.md)**
+
+<p>
+  <img src="docs/media/poster.png" width="38%" alt="Glass TV Enhanced poster: Home with weather, prayer times, Wisdom and Premier League widgets">
+  <img src="docs/screenshots/enhanced/home.jpg" width="60%" alt="Home with the clock, weather, prayer times, a Quran verse and Premier League scores above the glass dock">
+</p>
+
+## What Glass TV Enhanced adds
+
+- **Widgets you can select with the remote:** weather for any town (Open-Meteo), prayer times with an azan
+  (JAKIM e-Solat), **Wisdom** (Quran verses, hadith, motivation and quotes you can add, download or pin) and
+  Premier League scores with the table and highlights.
+- **Hide anything:** hold OK on a widget and choose *Hide from Home*; each one has its own tile in All apps to
+  bring it back. Not into football or prayer times? Keep just the weather and your wallpapers.
+- **Wallpaper studio:** try any picture on the real Home before choosing it, add one of 10 filters (Sepia, Noir,
+  Vivid, Dramatic…) at any strength, delete pictures, and send photos from a phone over Wi-Fi.
+- **Your language:** English, Bahasa Melayu or 中文, switched from the Language tile; add another with one file.
+- **Little touches:** an edge glow in the selected app's colour, a soft vignette, the winner in bold, widgets that
+  step aside when you browse the rows below the dock.
+- **Cleaner every day:** the TV's app caches are cleared daily, and a Clear cache tile does it on demand.
+
+Setting it up is the same as Glass TV's, below. Everything Glass TV does is still here.
+
+| | |
+|---|---|
+| ![Trying a wallpaper with the Sepia filter on Home](docs/screenshots/enhanced/filter-sepia.jpg) | ![The weather page](docs/screenshots/enhanced/weather-page.jpg) |
+| ![Prayer times for the week](docs/screenshots/enhanced/prayer-page.jpg) | ![The Wisdom page](docs/screenshots/enhanced/wisdom-page.jpg) |
+
+Glass TV Enhanced is released under the same MIT licence as Glass TV. Credits for the azan recordings and the
+data sources are in the [guide](docs/ENHANCED-GUIDE.md#credits).
+
+---
+
+# Glass TV (the original project)
+
 
 **Make your Android TV or Google TV fast and ad-free again: strip out the bloat and ads, free up memory,
 and come home to just your apps, with a new place to visit behind them every week.**

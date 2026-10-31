@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A crescent and star, drawn for the Waktu Solat tile in All apps. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="34dp" android:height="34dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M12.5,3A9,9 0,1 0,21 15.5A7,7 0,1 1,12.5 3z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M17.5,4.5l0.9,1.9 2.1,0.3 -1.5,1.5 0.4,2.1 -1.9,-1 -1.9,1 0.4,-2.1 -1.5,-1.5 2.1,-0.3z" />
+</vector>
