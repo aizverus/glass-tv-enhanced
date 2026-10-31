@@ -47,6 +47,17 @@ setup is the same as Glass TV's, below; everything Glass TV does is still here.
 Glass TV Enhanced is released under the same MIT licence as Glass TV. Credits for the azan recordings and the
 data sources are in the [guide](docs/ENHANCED-GUIDE.md#credits).
 
+## Say thanks
+
+Glass TV Enhanced is free and always will be. If it made your TV better and you'd like to say thanks, a small
+Bitcoin tip is welcome (Bitcoin network only):
+
+<img src="docs/media/btc-qr.png" width="160" alt="QR code for the Bitcoin address below">
+
+`1CFwe2gB5NE6kBVikU9dkWk3h18kZREbaj`
+
+Starring the repository and sharing it helps just as much.
+
 ---
 
 # Glass TV (the original project)

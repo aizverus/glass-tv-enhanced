@@ -62,6 +62,10 @@
   pre { background: #05070d; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; overflow-x: auto; font-size: 14px; color: #dfe6ff; }
   .poster { display: grid; grid-template-columns: minmax(0, 360px) 1fr; gap: 28px; align-items: center; }
   .poster img { width: 100%; border-radius: var(--radius); border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .tip { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+  .tip img { border-radius: 12px; background: #fff; }
+  .addr { display: inline-block; word-break: break-all; font-size: 16px; padding: 8px 12px; border-radius: 10px; background: #05070d; border: 1px solid var(--line); color: #ffd9a3; }
+  .tip .btn { cursor: pointer; font: inherit; }
   footer { padding: 56px 0 40px; color: var(--dim); font-size: 14px; text-align: center; }
   @media (max-width: 720px) {
     nav { display: none; }
@@ -74,7 +78,7 @@
 <div class="wrap">
   <header class="top">
     <div class="brand">Glass TV <span>Enhanced</span></div>
-    <nav><a href="#features">Features</a><a href="#remote">Remote</a><a href="#ai">Install with AI</a><a href="#setup">Set up</a>
+    <nav><a href="#features">Features</a><a href="#remote">Remote</a><a href="#ai">Install with AI</a><a href="#setup">Set up</a><a href="#support">Say thanks</a>
       <a href="https://github.com/aizverus/glass-tv-enhanced">GitHub</a></nav>
   </header>
 
@@ -172,6 +176,19 @@ export TV_HOST=192.168.1.50      # your TV's IP address
 launcher/build-and-install.sh</pre>
         <p class="sub">Full steps: <a href="https://github.com/aizverus/glass-tv-enhanced/blob/main/docs/CLEANYOURTV-README.md">setup guide</a> ·
           <a href="https://github.com/aizverus/glass-tv-enhanced/blob/main/docs/ENHANCED-GUIDE.md">features guide</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="support">
+    <h2>Say thanks</h2>
+    <p class="sub">Glass TV Enhanced is free and always will be. If it made your TV better, a small Bitcoin tip is welcome. Starring the repository and sharing it helps just as much.</p>
+    <div class="tip">
+      <img src="media/btc-qr.png" alt="QR code for the Bitcoin address" width="180" height="180">
+      <div>
+        <p class="sub" style="margin-bottom:8px">Bitcoin (BTC), on the Bitcoin network only</p>
+        <code class="addr">1CFwe2gB5NE6kBVikU9dkWk3h18kZREbaj</code>
+        <p><button class="btn" type="button" onclick="navigator.clipboard.writeText('1CFwe2gB5NE6kBVikU9dkWk3h18kZREbaj').then(()=>{this.textContent='Copied'})">Copy address</button></p>
       </div>
     </div>
   </section>
